@@ -1,0 +1,19 @@
+[Unit]
+Description=AL-1S Terminal Container Deployer
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+RequiresMountsFor=/run/media/mmcblk1p8
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/run/media/mmcblk1p8/maa-test-terminal
+EnvironmentFile=-/run/media/mmcblk1p8/maa-test-terminal/deploy/terminal/env.deployer
+ExecStart=/usr/bin/python3 /run/media/mmcblk1p8/maa-test-terminal/deploy/terminal/terminal-deployer.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

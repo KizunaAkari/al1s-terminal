@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+data/
+models/
+adb-home/
+.env
+.env.agent
+env.agent.npu
+env.deployer
+.terminal-assets/
+*.tar
+*.tar.gz
+*.whl

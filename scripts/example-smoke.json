@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "steps": [
+    {"action": "wake"},
+    {"action": "launch_app", "package": "com.example.app"},
+    {"action": "wait", "seconds": 2},
+    {"action": "screenshot"},
+    {"action": "close_app", "package": "com.example.app"},
+    {"action": "sleep"}
+  ]
+}
+

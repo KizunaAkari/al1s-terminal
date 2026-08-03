@@ -1,0 +1,30 @@
+services:
+  terminal-agent:
+    container_name: terminal-agent
+    image: ${TERMINAL_AGENT_IMAGE:-al1s-terminal-agent:npu-arm64}
+    build:
+      context: ../..
+      dockerfile: deploy/terminal/Dockerfile.npu
+      platforms:
+        - linux/arm64
+    env_file:
+      - ${AGENT_ENV_FILE:-./env.agent.npu}
+    environment:
+      AGENT_WORKDIR: /data
+      MAA_ADB_PATH: /usr/bin/adb
+      MAA_OCR_MODEL_DIR: /opt/maa-assets/ocr
+      MAA_YOLO_MODEL: /models/yolov8n_640x640_rk3576.rknn
+      MAA_YOLO_PROVIDER: agent.rknn_yolo:RknnYoloProvider
+      MAA_RKNN_RUNTIME_VERSION: 2.3.2
+    privileged: true
+    init: true
+    # Embedded terminal kernels may not ship iptables' raw table. Host
+    # networking avoids Docker bridge setup while keeping the agent ports
+    # explicitly configured by AGENT_PORT and AGENT_INTERACTIVE_PORT.
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 20s
+    volumes:
+      - ${TERMINAL_DATA_DIR:-/run/media/mmcblk1p8/maa-test-terminal/data}:/data
+      - ${ADB_HOME_DIR:-/run/media/mmcblk1p8/maa-test-terminal/adb-home}:/root/.android
+      - ${MAA_MODEL_DIR:-/run/media/mmcblk1p8/workspace/yolov8}:/models:ro

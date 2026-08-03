@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+data
+models
+adb-home
+artifacts
+backups
+.terminal-assets
+*.tar
+*.tar.gz
+*.whl

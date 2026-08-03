@@ -1,0 +1,70 @@
+FROM python:3.12-slim-bookworm
+
+ARG RKNN_LITE_WHEEL_URL=https://raw.githubusercontent.com/airockchip/rknn-toolkit2/v2.3.2/rknn-toolkit-lite2/packages/rknn_toolkit_lite2-2.3.2-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
+ARG RKNN_RUNTIME_URL=https://raw.githubusercontent.com/airockchip/rknn-toolkit2/v2.3.2/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so
+ARG RKNN_RUNTIME_SHA256=d31fc19c85b85f6091b2bd0f6af9d962d5264a4e410bfb536402ec92bac738e8
+
+LABEL org.opencontainers.image.title="AL-1S Terminal Agent"
+LABEL org.opencontainers.image.description="ARM64 RK3576 NPU terminal agent for AL-1S"
+LABEL org.opencontainers.image.variant="npu"
+LABEL org.opencontainers.image.architecture="arm64"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    AGENT_WORKDIR=/data \
+    MAA_ADB_PATH=/usr/bin/adb \
+    MAA_OCR_MODEL_DIR=/opt/maa-assets/ocr \
+    MAA_YOLO_MODEL=/models/yolov8n_640x640_rk3576.rknn \
+    MAA_YOLO_PROVIDER=agent.rknn_yolo:RknnYoloProvider \
+    MAA_RKNN_RUNTIME_VERSION=2.3.2
+
+WORKDIR /opt/maa-terminal
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        android-tools-adb \
+        ca-certificates \
+        curl \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+        libstdc++6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --fail --location --retry 4 --retry-delay 2 \
+        "${RKNN_RUNTIME_URL}" \
+        --output /usr/lib/librknnrt.so \
+    && printf '%s  %s\n' "${RKNN_RUNTIME_SHA256}" /usr/lib/librknnrt.so | sha256sum --check --status \
+    && ldconfig
+
+COPY agent/requirements.txt agent/requirements-rknn.txt /tmp/
+
+RUN python -m pip install --no-cache-dir \
+        -r /tmp/requirements.txt \
+        -r /tmp/requirements-rknn.txt \
+        "${RKNN_LITE_WHEEL_URL}"
+
+RUN mkdir -p /opt/maa-assets/ocr \
+    && for asset in det.onnx rec.onnx keys.txt; do \
+        curl --fail --location --retry 4 --retry-delay 2 \
+            "https://raw.githubusercontent.com/MaaXYZ/MaaCommonAssets/main/OCR/ppocr_v4/zh_cn/${asset}" \
+            --output "/opt/maa-assets/ocr/${asset}"; \
+    done
+
+COPY agent /opt/maa-terminal/agent
+COPY scripts/maa-binding-smoke.py scripts/rknn-provider-smoke.py /opt/maa-terminal/scripts/
+COPY deploy/terminal/container-entrypoint.sh /usr/local/bin/maa-terminal-entrypoint
+
+RUN chmod 0755 /usr/local/bin/maa-terminal-entrypoint \
+    && mkdir -p /data /models
+
+EXPOSE 8765 8766
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3)" \
+    || exit 1
+
+VOLUME ["/data", "/models"]
+
+ENTRYPOINT ["/usr/local/bin/maa-terminal-entrypoint"]
+CMD ["python", "-m", "agent"]
