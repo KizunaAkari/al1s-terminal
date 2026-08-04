@@ -779,12 +779,16 @@ class MaaAdapter:
                     ),
                 }
             if skipped and isinstance(condition_config, dict) and condition_config.get("enabled") is True:
-                skip_remaining = condition_config.get("skip_remaining_steps") is True
-                skipped_indexes = (
-                    list(range(index, len(script_steps)))
-                    if skip_remaining
-                    else [index]
-                )
+                target_index: int | None = None
+                raw_target = condition_config.get("skip_to_step_index")
+                if raw_target is not None and not isinstance(raw_target, bool):
+                    try:
+                        candidate = int(raw_target)
+                        if float(raw_target) == candidate and index < candidate - 1 < len(script_steps):
+                            target_index = candidate - 1
+                    except (TypeError, ValueError, OverflowError):
+                        target_index = None
+                skipped_indexes = list(range(index, target_index)) if target_index is not None else [index]
                 conditional_skips.append({
                     "trigger_step_index": index,
                     "trigger_step_number": index + 1,
@@ -793,7 +797,9 @@ class MaaAdapter:
                     "operator": condition_config.get("operator"),
                     "value": condition_config.get("value"),
                     "threshold": condition_config.get("threshold"),
-                    "scope": "remaining" if skip_remaining else "current",
+                    "scope": "until_step" if target_index is not None else "current",
+                    "target_step_index": target_index,
+                    "target_step_number": target_index + 1 if target_index is not None else None,
                     "skipped_step_indexes": skipped_indexes,
                     "skipped_step_numbers": [item + 1 for item in skipped_indexes],
                 })
@@ -849,10 +855,11 @@ class MaaAdapter:
             steps.append(record)
 
         for event in conditional_skips:
-            if event.get("scope") != "remaining":
+            if event.get("scope") != "until_step":
                 continue
             trigger_index = int(event["trigger_step_index"])
-            for skipped_index in range(trigger_index + 1, len(steps)):
+            target_index = int(event["target_step_index"])
+            for skipped_index in range(trigger_index + 1, target_index):
                 skipped_step = steps[skipped_index]
                 skipped_step["skipped"] = True
                 skipped_step["skipped_by_step_index"] = trigger_index

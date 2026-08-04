@@ -79,6 +79,7 @@ class MaaPipelineCompiler:
         steps = script.get("steps", [])
         if not isinstance(steps, list):
             raise ValueError("steps must be an array")
+        self._step_count = len(steps)
 
         canonical = json.dumps(script, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         script_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
@@ -95,7 +96,7 @@ class MaaPipelineCompiler:
         self._step_exits: dict[int, list[str]] = {}
         self._node_steps: dict[str, int] = {}
         self._active_packages: set[str] = set()
-        self._skip_to_end_guards: list[str] = []
+        self._skip_guard_jumps: list[tuple[str, int]] = []
         self._requires_ocr = False
         self._requires_yolo = False
 
@@ -155,15 +156,20 @@ class MaaPipelineCompiler:
                         failure_retry_routes[next_index].error_candidates,
                     )
 
-        # A condition can intentionally terminate the remaining step chain.
+        # A condition can jump over a selected contiguous range of later steps.
         # The guard is the first candidate for its step, so this branch is only
-        # taken when the condition recognition hits; the normal step candidates
-        # still continue through the regular next-step link on a miss.
-        for guard_name in self._skip_to_end_guards:
+        # taken when the condition recognition hits; a miss follows the normal
+        # next-step link.
+        for guard_name, target_index in self._skip_guard_jumps:
             guard = self._pipeline[guard_name]
-            guard["next"] = [end_name]
-            guard["timeout"] = 1_000
-            guard["rate_limit"] = 100
+            target_candidates = self._entry_candidates(
+                target_index,
+                plans,
+                global_candidates_by_step,
+            )
+            guard["next"] = list(target_candidates)
+            guard["timeout"] = plans[target_index].incoming_timeout_ms
+            guard["rate_limit"] = plans[target_index].incoming_rate_limit_ms
 
         root_name = self._name("Root")
         first_index = normal_indexes[0] if normal_indexes else None
@@ -912,8 +918,9 @@ class MaaPipelineCompiler:
             "post_delay": 0,
         })
         self._pipeline[guard_name] = guard
-        if condition.get("skip_remaining_steps") is True:
-            self._skip_to_end_guards.append(guard_name)
+        target_index = self._skip_target_index(index, condition)
+        if target_index is not None:
+            self._skip_guard_jumps.append((guard_name, target_index))
         return _StepPlan(
             candidates=[guard_name, *plan.candidates],
             exits=[guard_name, *plan.exits],
@@ -951,8 +958,9 @@ class MaaPipelineCompiler:
         )
         guard["post_delay"] = 0
         self._pipeline[guard_name] = guard
-        if condition.get("skip_remaining_steps") is True:
-            self._skip_to_end_guards.append(guard_name)
+        target_index = self._skip_target_index(index, condition)
+        if target_index is not None:
+            self._skip_guard_jumps.append((guard_name, target_index))
         return _StepPlan(
             candidates=[guard_name, *plan.candidates],
             exits=[guard_name, *plan.exits],
@@ -960,6 +968,23 @@ class MaaPipelineCompiler:
             incoming_timeout_ms=plan.incoming_timeout_ms,
             incoming_rate_limit_ms=plan.incoming_rate_limit_ms,
         )
+
+    def _skip_target_index(self, index: int, condition: dict[str, Any]) -> int | None:
+        raw_target = condition.get("skip_to_step_index")
+        if raw_target is None:
+            return None
+        if isinstance(raw_target, bool):
+            raise ValueError("skip target step must be an integer")
+        try:
+            target = int(raw_target)
+            numeric_target = float(raw_target)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("skip target step must be an integer") from exc
+        if not math.isfinite(numeric_target) or numeric_target != target:
+            raise ValueError("skip target step must be an integer")
+        if target <= index + 1 or target > self._step_count:
+            raise ValueError("skip target step must be a later step in the script")
+        return target - 1
 
     def _wrap_post_assertion(
         self,
