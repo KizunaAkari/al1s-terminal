@@ -6,6 +6,7 @@ import shutil
 import socket
 import threading
 import time
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,10 @@ class Agent:
         os.makedirs(settings.workdir, exist_ok=True)
         self.state_path = os.path.join(settings.workdir, "agent-state.json")
         self.accepting_tasks = self._load_accepting_tasks()
+        # A new process represents a new terminal instance.  The platform uses
+        # this to return commands claimed by an old systemd/container process
+        # to the queue during a migration or restart.
+        self.instance_id = uuid.uuid4().hex
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.started_monotonic = time.monotonic()
         self._heartbeat_thread: threading.Thread | None = None
@@ -116,7 +121,9 @@ class Agent:
                               "task_recording": True,
                               "storage_monitoring": True,
                               "charging_control": bool(os.getenv("ANDROID_CHARGING_COMMAND"))},
-            "metadata": {"hostname": socket.gethostname(), "kernel": platform.release(),
+            "metadata": {"agent_instance_id": self.instance_id,
+                         "interactive_public_url": settings.interactive_public_url,
+                         "hostname": socket.gethostname(), "kernel": platform.release(),
                          "machine": platform.machine(), "workdir": os.path.abspath(settings.workdir),
                          "execution_backend": "maa", "maa": maa_status,
                          "yolo": self.executor.yolo.status()},

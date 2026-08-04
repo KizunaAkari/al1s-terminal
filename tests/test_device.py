@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, call
+from unittest.mock import Mock, call, patch
 
 from agent.device import AndroidDevice
 
@@ -57,6 +57,40 @@ class OrientationTests(unittest.TestCase):
             call("wm", "size", timeout=10),
         ])
         self.assertEqual(result["orientation"], "landscape")
+
+
+class DeviceSerialSelectionTests(unittest.TestCase):
+    @patch("agent.device.subprocess.run")
+    def test_auto_selects_the_only_online_device(self, run):
+        run.side_effect = [
+            SimpleNamespace(
+                returncode=0,
+                stdout="List of devices attached\nc57bb86b device usb:1-1 product:apollo_global\n",
+                stderr="",
+            ),
+            SimpleNamespace(returncode=0, stdout="device\n", stderr=""),
+            SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ]
+        device = AndroidDevice("", ".")
+
+        result = device.state()
+
+        self.assertTrue(result["connected"])
+        self.assertEqual(result["serial"], "c57bb86b")
+        self.assertEqual(run.call_args_list[1].args[0], ["adb", "-s", "c57bb86b", "get-state"])
+
+    @patch("agent.device.subprocess.run")
+    def test_auto_selection_reports_multiple_devices(self, run):
+        run.return_value = SimpleNamespace(
+            returncode=0,
+            stdout="List of devices attached\na device usb:1-1\nb device usb:1-2\n",
+            stderr="",
+        )
+        result = AndroidDevice("", ".").state()
+
+        self.assertFalse(result["connected"])
+        self.assertEqual(result["serial"], "default")
+        self.assertIn("multiple online", result["warning"])
 
 
 if __name__ == "__main__":

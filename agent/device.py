@@ -14,7 +14,12 @@ class AndroidDevice:
     """Small ADB adapter. Root-only operations are opt-in via environment commands."""
 
     def __init__(self, serial: str = "", workdir: str = "./agent-data"):
-        self.serial = serial
+        # An unset serial means "auto-select the only online device".  The
+        # literal value ``default`` is not an ADB serial and must never be
+        # sent to scrcpy/browser clients.
+        normalized_serial = str(serial or "").strip()
+        self.serial = "" if normalized_serial in {"", "default"} else normalized_serial
+        self._active_serial = self.serial
         self.workdir = Path(workdir)
         self.workdir.mkdir(parents=True, exist_ok=True)
         self._launcher_package_cache = ""
@@ -22,10 +27,54 @@ class AndroidDevice:
 
     def _adb(self, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
         command = ["adb"]
-        if self.serial:
-            command += ["-s", self.serial]
+        serial = self.serial or getattr(self, "_active_serial", "")
+        if serial:
+            command += ["-s", serial]
         command += list(args)
         return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+
+    @staticmethod
+    def _parse_online_adb_devices(output: str) -> list[str]:
+        devices: list[str] = []
+        for line in output.splitlines():
+            fields = line.strip().split()
+            if len(fields) >= 2 and fields[1] == "device" and fields[0] != "List":
+                devices.append(fields[0])
+        return devices
+
+    def _online_adb_devices(self) -> list[str]:
+        result = subprocess.run(
+            ["adb", "devices", "-l"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip() or "adb devices failed")
+        return self._parse_online_adb_devices(result.stdout)
+
+    @staticmethod
+    def _parse_display_size(output: str) -> tuple[int, int] | None:
+        matches = re.findall(r"(?:Physical|Override) size:\s*(\d+)x(\d+)", output)
+        if not matches:
+            return None
+        width, height = matches[-1]
+        return int(width), int(height)
+
+    def _resolve_serial(self) -> tuple[str, str]:
+        """Return the explicit serial or the sole online ADB device."""
+        if self.serial:
+            return self.serial, ""
+
+        devices = self._online_adb_devices()
+        if len(devices) == 1:
+            self._active_serial = devices[0]
+            return devices[0], ""
+        self._active_serial = ""
+        if not devices:
+            return "", "Android device is not connected"
+        return "", f"multiple online Android devices found: {', '.join(devices)}; set ADB_SERIAL"
 
     def _shell(self, *args: str, timeout: int = 30) -> str:
         result = self._adb("shell", *args, timeout=timeout)
@@ -34,15 +83,28 @@ class AndroidDevice:
         return result.stdout.strip()
 
     def is_connected(self) -> bool:
+        if not self.serial and not getattr(self, "_active_serial", ""):
+            try:
+                serial, _ = self._resolve_serial()
+            except (FileNotFoundError, subprocess.SubprocessError, RuntimeError):
+                return False
+            if not serial:
+                return False
         result = self._adb("get-state", timeout=10)
         return result.returncode == 0 and result.stdout.strip() == "device"
 
     def state(self) -> dict[str, Any]:
         try:
+            serial, selection_warning = self._resolve_serial()
+        except (FileNotFoundError, subprocess.SubprocessError, RuntimeError) as exc:
+            return {"connected": False, "serial": self.serial or "default", "warning": str(exc)}
+        if not serial:
+            return {"connected": False, "serial": "default", "warning": selection_warning}
+        try:
             connected = self.is_connected()
         except (FileNotFoundError, subprocess.SubprocessError) as exc:
-            return {"connected": False, "serial": self.serial or "default", "warning": str(exc)}
-        data: dict[str, Any] = {"connected": connected, "serial": self.serial or "default", "root": False}
+            return {"connected": False, "serial": serial, "warning": str(exc)}
+        data: dict[str, Any] = {"connected": connected, "serial": serial, "root": False}
         if connected:
             try:
                 battery = self._shell("dumpsys", "battery", timeout=10)
@@ -51,6 +113,10 @@ class AndroidDevice:
                 power = self._shell("dumpsys", "power", timeout=10)
                 data["screen_on"] = "Wakefulness=Awake" in power or "state=ON" in power
                 data["storage"] = self.phone_storage()
+                display_size = self._parse_display_size(self._shell("wm", "size", timeout=10))
+                if display_size:
+                    data["screen_width"], data["screen_height"] = display_size
+                    data["screen_size"] = f"{display_size[0]}x{display_size[1]}"
             except Exception as exc:
                 data["warning"] = str(exc)
             if not self._static_state_cache:
@@ -251,7 +317,8 @@ class AndroidDevice:
         target = self.workdir / "latest-screen.png"
         temporary = self.workdir / f".latest-screen-{time.time_ns()}.png"
         # Binary mode is required because PNG data cannot be decoded as text.
-        binary_command = ["adb"] + (["-s", self.serial] if self.serial else []) + ["exec-out", "screencap", "-p"]
+        serial = self.serial or getattr(self, "_active_serial", "")
+        binary_command = ["adb"] + (["-s", serial] if serial else []) + ["exec-out", "screencap", "-p"]
         raw = subprocess.run(binary_command, capture_output=True, timeout=30, check=False)
         if raw.returncode:
             raise RuntimeError(raw.stderr.decode(errors="replace"))
