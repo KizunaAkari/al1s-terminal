@@ -247,6 +247,32 @@ class MaaPipelineCompilerTests(unittest.TestCase):
         self.assertIn("SkipIf", root_next[0])
         self.assertIn("Key_3", root_next[1])
 
+    def test_skip_remaining_steps_routes_condition_hit_to_end(self):
+        compiled = self.compiler.compile({
+            "version": 2,
+            "steps": [
+                {"action": "home"},
+                {
+                    "action": "wait",
+                    "seconds": 1,
+                    "skip_condition": {
+                        "enabled": True,
+                        "operator": "gt",
+                        "value": 10,
+                        "region": {"x": 1, "y": 2, "width": 30, "height": 20},
+                        "skip_remaining_steps": True,
+                    },
+                },
+                {"action": "back"},
+            ],
+        })
+
+        guard_name = next(name for name in compiled.pipeline if "SkipIf" in name)
+        guard = compiled.pipeline[guard_name]
+        self.assertEqual(guard["next"], [next(name for name in compiled.pipeline if "_End" in name)])
+        previous_exit = compiled.step_exits[0][0]
+        self.assertIn(guard_name, [item.get("name", item) if isinstance(item, dict) else item for item in compiled.pipeline[previous_exit]["next"]])
+
     def test_image_skip_uses_native_template_match_before_actual_step(self):
         compiled = self.compiler.compile({
             "version": 2,

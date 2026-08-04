@@ -95,6 +95,7 @@ class MaaPipelineCompiler:
         self._step_exits: dict[int, list[str]] = {}
         self._node_steps: dict[str, int] = {}
         self._active_packages: set[str] = set()
+        self._skip_to_end_guards: list[str] = []
         self._requires_ocr = False
         self._requires_yolo = False
 
@@ -153,6 +154,16 @@ class MaaPipelineCompiler:
                         node,
                         failure_retry_routes[next_index].error_candidates,
                     )
+
+        # A condition can intentionally terminate the remaining step chain.
+        # The guard is the first candidate for its step, so this branch is only
+        # taken when the condition recognition hits; the normal step candidates
+        # still continue through the regular next-step link on a miss.
+        for guard_name in self._skip_to_end_guards:
+            guard = self._pipeline[guard_name]
+            guard["next"] = [end_name]
+            guard["timeout"] = 1_000
+            guard["rate_limit"] = 100
 
         root_name = self._name("Root")
         first_index = normal_indexes[0] if normal_indexes else None
@@ -901,6 +912,8 @@ class MaaPipelineCompiler:
             "post_delay": 0,
         })
         self._pipeline[guard_name] = guard
+        if condition.get("skip_remaining_steps") is True:
+            self._skip_to_end_guards.append(guard_name)
         return _StepPlan(
             candidates=[guard_name, *plan.candidates],
             exits=[guard_name, *plan.exits],
@@ -938,6 +951,8 @@ class MaaPipelineCompiler:
         )
         guard["post_delay"] = 0
         self._pipeline[guard_name] = guard
+        if condition.get("skip_remaining_steps") is True:
+            self._skip_to_end_guards.append(guard_name)
         return _StepPlan(
             candidates=[guard_name, *plan.candidates],
             exits=[guard_name, *plan.exits],

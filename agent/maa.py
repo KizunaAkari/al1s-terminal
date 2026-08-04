@@ -708,6 +708,7 @@ class MaaAdapter:
                 node_records.append(record)
 
         steps: list[dict[str, Any]] = []
+        conditional_skips: list[dict[str, Any]] = []
         script_steps = script.get("steps", [])
         for index, step in enumerate(script_steps):
             matching = [record for record in node_records if record.get("step_index") == index]
@@ -777,6 +778,25 @@ class MaaAdapter:
                         else None
                     ),
                 }
+            if skipped and isinstance(condition_config, dict) and condition_config.get("enabled") is True:
+                skip_remaining = condition_config.get("skip_remaining_steps") is True
+                skipped_indexes = (
+                    list(range(index, len(script_steps)))
+                    if skip_remaining
+                    else [index]
+                )
+                conditional_skips.append({
+                    "trigger_step_index": index,
+                    "trigger_step_number": index + 1,
+                    "trigger_action": step.get("action"),
+                    "mode": str(condition_config.get("mode") or "numeric"),
+                    "operator": condition_config.get("operator"),
+                    "value": condition_config.get("value"),
+                    "threshold": condition_config.get("threshold"),
+                    "scope": "remaining" if skip_remaining else "current",
+                    "skipped_step_indexes": skipped_indexes,
+                    "skipped_step_numbers": [item + 1 for item in skipped_indexes],
+                })
             assertion = step.get("post_assertion")
             if isinstance(assertion, dict) and assertion.get("enabled") is True:
                 assertion_hits = [
@@ -828,6 +848,16 @@ class MaaAdapter:
                 }
             steps.append(record)
 
+        for event in conditional_skips:
+            if event.get("scope") != "remaining":
+                continue
+            trigger_index = int(event["trigger_step_index"])
+            for skipped_index in range(trigger_index + 1, len(steps)):
+                skipped_step = steps[skipped_index]
+                skipped_step["skipped"] = True
+                skipped_step["skipped_by_step_index"] = trigger_index
+                skipped_step.setdefault("result", {})["reason"] = "conditional_skip"
+
         global_dismissals = [
             {
                 "name": record["name"],
@@ -841,6 +871,7 @@ class MaaAdapter:
             "steps": steps,
             "maa_nodes": node_records,
             "global_popup_dismissals": global_dismissals,
+            "conditional_skips": conditional_skips,
             "numeric_conditions": collector["numeric_conditions"],
             "yolo_detections": collector["yolo"],
             "custom_actions": collector["custom_actions"],
