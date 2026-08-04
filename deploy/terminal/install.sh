@@ -113,6 +113,15 @@ if ! command -v curl >/dev/null 2>&1; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates
 fi
 
+# MaaFramework's native ARM64 library links against libatomic.  Keep this
+# check independent from curl: many board images already contain curl but do
+# not contain the runtime library.
+if ! ldconfig -p 2>/dev/null | grep -q 'libatomic\.so\.1'; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libatomic1
+    ldconfig
+fi
+
 if [[ ! -x "$uv_bin" ]]; then
     machine="$(uname -m)"
     if [[ "$machine" != "aarch64" && "$machine" != "arm64" ]]; then
