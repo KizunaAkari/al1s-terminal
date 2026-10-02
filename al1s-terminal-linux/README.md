@@ -30,7 +30,7 @@ scrcpy relay 使用独立 video/control WebSocket URL；正式任务或临时测
 
 ## 宿主机部署器
 
-部署器不进入 Agent 镜像，保持 Python 3.10 标准库兼容；独立宿主管理服务的环境要求见[部署说明](https://github.com/KizunaAkari/al1s-platform/blob/main/al1s-deployment/README.md)。
+独立 zipapp 部署器不进入 Agent 镜像，其源码保持 Python 3.10 标准库兼容。通过终端 wheel 和安装脚本安装的宿主管理服务则要求 Python 3.12，使用安装器创建的虚拟环境；环境与执行入口见[部署说明](https://github.com/KizunaAkari/al1s-platform/blob/main/al1s-deployment/README.md)。
 
 ```text
 python -m terminal_deployer.build dist/al1s-terminal-deployer.pyz
