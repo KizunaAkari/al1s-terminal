@@ -1,2 +1,0 @@
-# Optional RK3576 NPU provider dependencies. MaaFramework itself does not need cv2.
-opencv-python-headless==4.10.0.84

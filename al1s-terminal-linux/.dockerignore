@@ -1,0 +1,12 @@
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+.env
+.venv
+data
+logs
+tests
+scripts
+requirements-arm64.in

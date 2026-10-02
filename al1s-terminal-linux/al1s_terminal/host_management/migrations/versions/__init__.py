@@ -1,0 +1,1 @@
+"""Host journal schema revisions."""

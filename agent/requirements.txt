@@ -1,5 +1,0 @@
-requests>=2.31,<3
-python-dotenv>=1.0,<2
-MaaFw==5.12.1
-numpy==1.26.4
-websockets==12.0
