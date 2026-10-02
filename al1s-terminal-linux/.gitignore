@@ -1,3 +1,14 @@
+/.venv/
+/data/
+/logs/
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+/.terminal-assets/
+/.coverage
+__pycache__/
+*.py[cod]
+
 # Private runtime configuration; keep distributable examples and templates.
 .env
 .env.*
@@ -48,8 +59,6 @@ venv/
 build/
 dist/
 *.egg-info/
-__pycache__/
-*.py[cod]
 *.tsbuildinfo
 .pytest_cache/
 .mypy_cache/

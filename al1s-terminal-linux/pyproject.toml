@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "al1s-terminal"
+version = "0.1.0"
+description = "Durable AL-1S Linux terminal agent"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "alembic>=1.16,<2",
+  "httpx>=0.28,<1",
+  "paho-mqtt==2.1.0",
+  "pydantic-settings>=2.10,<3",
+  "sqlalchemy==2.0.52",
+  "structlog>=25.4,<26",
+  "websockets==12.0",
+]
+
+[project.optional-dependencies]
+maa = [
+  "MaaFw==5.12.1",
+  "numpy==1.26.4",
+  "opencv-python-headless==4.10.0.84",
+]
+dev = [
+  "mypy>=1.17,<2",
+  "pytest>=8,<10",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+al1s-terminal = "al1s_terminal.__main__:main"
+al1s-terminal-deployer = "terminal_deployer.__main__:main"
+al1s-terminal-deployer-build = "terminal_deployer.build:main"
+
+[tool.setuptools.packages.find]
+include = ["al1s_terminal*", "terminal_deployer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["build"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["alembic.*", "paho.*", "websockets.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["maa.*", "cv2", "numpy", "rknnlite.*"]
+ignore_missing_imports = true

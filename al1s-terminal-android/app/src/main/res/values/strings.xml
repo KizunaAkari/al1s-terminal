@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">AL-1S 小米 Root Demo</string>
+    <string name="service_channel_name">AL-1S 终端任务</string>
+    <string name="service_notification_title">AL-1S Android 终端运行中</string>
+</resources>

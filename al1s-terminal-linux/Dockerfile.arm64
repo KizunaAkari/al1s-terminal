@@ -1,0 +1,66 @@
+ARG PYTHON_IMAGE=python:3.12.13-slim-bookworm@sha256:3f9c7f75b916e8279e24136d7a57769aba9e193715be52570417698c52d6eed0
+FROM ${PYTHON_IMAGE}
+
+ARG INSTALL_SYSTEM_PACKAGES=1
+
+LABEL org.opencontainers.image.title="AL-1S Linux Terminal"
+LABEL org.opencontainers.image.description="Durable ARM64 terminal agent with MaaFramework and RKNN"
+LABEL org.opencontainers.image.architecture="arm64"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    LD_LIBRARY_PATH=/opt/al1s-assets/rknn-runtime \
+    AL1S_TERMINAL_DATA_DIR=/data \
+    AL1S_TERMINAL_ADB_PATH=/usr/bin/adb \
+    AL1S_TERMINAL_MAA_OCR_MODEL_DIR=/opt/al1s-assets/ocr \
+    AL1S_TERMINAL_MAA_YOLO_PROVIDER=al1s_terminal.providers.rknn_yolo:RknnYoloProvider \
+    AL1S_TERMINAL_RKNN_MODEL=/models/yolov8n_640x640_rk3576.rknn \
+    AL1S_TERMINAL_RKNN_RUNTIME_VERSION=2.3.2 \
+    AL1S_TERMINAL_SCRCPY_SERVER_PATH=/opt/al1s-assets/scrcpy-server-v3.3.4 \
+    AL1S_TERMINAL_SCRCPY_SERVER_SHA256=8588238c9a5a00aa542906b6ec7e6d5541d9ffb9b5d0f6e1bc0e365e2303079e
+
+RUN if [ "${INSTALL_SYSTEM_PACKAGES}" = "1" ]; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends \
+            adb=1:29.0.6-28 \
+            aapt=1:10.0.0+r36-10 \
+            ca-certificates=20230311+deb12u1 \
+            libatomic1=12.2.0-14+deb12u1 \
+            libgl1=1.6.0-1 \
+            libglib2.0-0=2.74.6-2+deb12u9 \
+            libgomp1=12.2.0-14+deb12u1 \
+            libstdc++6=12.2.0-14+deb12u1 \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+COPY .terminal-assets /opt/al1s-assets
+COPY tools/assets-arm64.sha256 /tmp/assets-arm64.sha256
+COPY requirements-arm64.lock /opt/al1s-terminal/requirements-arm64.lock
+WORKDIR /opt/al1s-assets
+RUN sha256sum --check /tmp/assets-arm64.sha256 \
+    && ln -s /opt/al1s-assets/rknn-runtime/librknnrt.so /usr/lib/librknnrt.so \
+    && install -m 0644 \
+        /opt/al1s-assets/nss-mdns/libnss_mdns4_minimal.so.2 \
+        /usr/lib/aarch64-linux-gnu/libnss_mdns4_minimal.so.2 \
+    && sed -i \
+        's/^hosts:.*/hosts: files mdns4_minimal [NOTFOUND=return] dns/' \
+        /etc/nsswitch.conf \
+    && python -m pip install --no-cache-dir --no-index \
+        --find-links=/opt/al1s-assets/wheels \
+        -r /opt/al1s-terminal/requirements-arm64.lock
+
+WORKDIR /opt/al1s-terminal
+COPY alembic.ini pyproject.toml README.md ./
+COPY migrations ./migrations
+COPY al1s_terminal ./al1s_terminal
+
+RUN mkdir -p /data /models /certs
+
+VOLUME ["/data", "/models", "/certs"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import os; os.kill(1, 0)" || exit 1
+
+ENTRYPOINT ["python", "-m", "al1s_terminal"]
+CMD ["run"]

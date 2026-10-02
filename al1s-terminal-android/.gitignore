@@ -1,3 +1,9 @@
+/.gradle/
+/.idea/
+/local.properties
+/**/build/
+*.iml
+
 # Private runtime configuration; keep distributable examples and templates.
 .env
 .env.*
