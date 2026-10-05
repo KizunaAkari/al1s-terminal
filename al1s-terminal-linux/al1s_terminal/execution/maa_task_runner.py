@@ -387,6 +387,7 @@ def _bounded_diagnostic(value: dict[str, Any]) -> dict[str, Any]:
         "failed_step": normalized.get("failed_step"),
         "failure_diagnosis": normalized.get("failure_diagnosis"),
         "recognition_failure": normalized.get("recognition_failure"),
+        "execution_failure": normalized.get("execution_failure"),
         "failure_screenshot": normalized.get("failure_screenshot"),
         "failure_screenshot_error": normalized.get("failure_screenshot_error"),
         "capture_files": captures,

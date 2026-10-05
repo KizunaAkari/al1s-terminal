@@ -197,6 +197,11 @@ class PipelineControlFlowCompiler(PipelineBuilder):
 
     def _wire_retry_target(self, route: _FailureRetryRoute, target_plan: _StepPlan) -> None:
         target_index = route.target_index
+        self.context.pipeline[route.entry_name]["custom_action_param"]["reset_hit_count_nodes"] = [
+            name for name in target_plan.nodes
+            if type(self.context.pipeline[name].get("max_hit")) is int
+            and self.context.pipeline[name]["max_hit"] > 0
+        ]
         for node_name in target_plan.nodes:
             self._append_on_error(
                 self.context.pipeline[node_name],

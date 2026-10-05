@@ -16,7 +16,11 @@ from .maa_diagnostics import MaaDiagnostics
 from .maa_pipeline import CompiledMaaTask, MaaPipelineCompiler
 from .maa_runtime_types import MaaExecutionError as MaaExecutionError
 from .maa_runtime_types import YoloAdapter as YoloAdapter
-from .recognition_diagnostics import enrich_recognition_failure, install_recognition_sink
+from .recognition_diagnostics import (
+    enrich_execution_failure,
+    enrich_recognition_failure,
+    install_recognition_sink,
+)
 
 
 class MaaAdapter(MaaDiagnostics):
@@ -254,7 +258,6 @@ class MaaAdapter(MaaDiagnostics):
         if not tasker.bind(resource, controller) or not tasker.inited:
             raise MaaExecutionError("MaaFramework Tasker initialization failed")
 
-        recognition_tracker = None
         from al1s_terminal.execution.capture_budget import CaptureBudget
         from al1s_terminal.execution.failure_skip import register_failure_skips
 
@@ -269,7 +272,7 @@ class MaaAdapter(MaaDiagnostics):
 
             install_step_sink(tasker, compiled.node_steps, compiled.step_exits, on_step_event,
                               pipeline=compiled.pipeline)
-            recognition_tracker = install_recognition_sink(tasker, compiled.pipeline)
+        recognition_tracker = install_recognition_sink(tasker, compiled.pipeline)
 
         job = tasker.post_task(compiled.entry, compiled.pipeline)
         if has_guard or has_repeats or has_popups or has_budgets:
@@ -290,6 +293,7 @@ class MaaAdapter(MaaDiagnostics):
                 "error_type": screen_failures[0].get("error_type", "MaaScreenSizeMismatch"),
                 "screen_size": screen_failures[0],
             }
+            enrich_execution_failure(guard_diagnostic, compiled.pipeline, budget_clock)
             enrich_recognition_failure(guard_diagnostic, recognition_tracker, budget_clock)
             raise MaaExecutionError(
                 "Execution guard stopped the task",
