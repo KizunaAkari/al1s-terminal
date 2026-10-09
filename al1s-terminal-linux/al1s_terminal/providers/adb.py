@@ -145,6 +145,13 @@ class AdbProvider:
             )
         return payload
 
+    def prepare_screen(self, serial: str, *, allowed: Callable[[], bool] = lambda: True) -> None:
+        from al1s_terminal.providers.screen_preparation import prepare_screen
+
+        if not serial.strip():
+            raise AdbProviderError("adb_serial_missing", "Bound device required")
+        prepare_screen(self._adb_path, serial, self._runner, allowed=allowed)
+
     def force_stop_and_home(self, serial: str, package_name: str | None) -> None:
         commands: list[tuple[str, ...]] = []
         if package_name:

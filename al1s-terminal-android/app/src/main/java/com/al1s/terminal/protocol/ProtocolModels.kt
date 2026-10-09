@@ -21,6 +21,7 @@ data class TaskPackage(
     val attemptId: String,
     val packageHash: String,
     val body: JSONObject,
+    val canonicalBody: String? = null,
 )
 
 data class OfflinePermit(

@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit
 
 class SyncWorker(context: Context, parameters: WorkerParameters) : Worker(context, parameters) {
     override fun doWork(): Result {
+        if (!AgentCoordinator(applicationContext).enabled()) return Result.success()
         val result = (applicationContext as TerminalApplication).syncEngine().runOnce()
         return if (result.online || result.execution != "registration_required") {
             Result.success()
@@ -23,6 +24,8 @@ class SyncWorker(context: Context, parameters: WorkerParameters) : Worker(contex
 
     companion object {
         private const val UNIQUE_WORK = "al1s-terminal-reconcile"
+
+        fun cancel(context: Context) = WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_WORK)
 
         fun schedule(context: Context) {
             val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)

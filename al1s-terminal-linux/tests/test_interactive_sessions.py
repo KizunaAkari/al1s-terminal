@@ -11,6 +11,60 @@ from al1s_terminal.interactive.sessions import (
 )
 
 
+def test_editor_confirmation_caps_transient_grace_and_heartbeat_cannot_extend_it():
+    now = [0.0]
+    closed = []
+    manager = InteractiveSessionManager(
+        clock=lambda: now[0], close_connections=lambda items, reason: closed.append(items)
+    )
+    session = manager.create("phone")
+    manager.confirm_platform(30)
+    manager.confirm_editor(10)
+    control = object()
+    manager.attach(session.token, InteractiveChannel.CONTROL, control)
+    now[0] = 9.9
+    manager.platform_transient_failure()
+    manager.send_control(session.token, control, lambda: None)
+    assert not closed
+    manager.confirm_platform(30)
+    now[0] = 10
+    manager.expire_platform_confirmation()
+    assert closed == [(control,)]
+    assert manager.get(session.token).mode is InteractiveSessionMode.VIEW_ONLY
+    manager.confirm_editor(10)
+    manager.attach(session.token, InteractiveChannel.CONTROL, object())
+    assert manager.get(session.token).mode is InteractiveSessionMode.CONTROL
+
+
+@pytest.mark.parametrize("limit", ["platform", "device", "automation", "disconnect"])
+def test_editor_grace_does_not_override_other_revocation(limit):
+    now = [0.0]
+    manager = InteractiveSessionManager(clock=lambda: now[0])
+    session = manager.create("phone")
+    manager.confirm_platform(3 if limit == "platform" else 30)
+    manager.confirm_editor(10)
+    control = object()
+    manager.attach(session.token, InteractiveChannel.CONTROL, control)
+    if limit == "device":
+        manager.set_input_authority(lambda _: False)
+    elif limit == "automation":
+        manager.begin_automation("phone")
+    elif limit == "disconnect":
+        manager.disconnect_platform()
+    now[0] = 4
+    manager.platform_transient_failure()
+    with pytest.raises(InteractiveSessionError):
+        manager.send_control(session.token, control, lambda: pytest.fail("input escaped"))
+
+
+def test_no_transient_grace_without_a_successful_editor_confirmation():
+    manager = InteractiveSessionManager()
+    session = manager.create("phone")
+    manager.confirm_platform(30)
+    manager.platform_transient_failure()
+    assert manager.get(session.token).mode is InteractiveSessionMode.VIEW_ONLY
+
+
 def test_automation_keeps_video_and_revokes_control_channel() -> None:
     closed: list[tuple[tuple[object, ...], str]] = []
     manager = InteractiveSessionManager(
@@ -139,9 +193,23 @@ def test_platform_disconnect_keeps_video_and_requires_fresh_control() -> None:
     manager.confirm_platform(30)
     with pytest.raises(InteractiveSessionError):
         manager.send_control(session.token, old, lambda: sent.append("stale"))
+    manager.confirm_editor(10)
     manager.attach(session.token, InteractiveChannel.CONTROL, new)
     manager.send_control(session.token, new, lambda: sent.append("new"))
     assert sent == ["first", "new"]
+
+
+def test_late_editor_confirmation_cannot_undo_explicit_revocation():
+    manager = InteractiveSessionManager()
+    session = manager.create("phone")
+    manager.confirm_platform(30)
+    epoch = manager.confirmation_epoch()
+    manager.disconnect_platform()
+    manager.confirm_platform(30)
+    manager.confirm_editor(10, expected_epoch=epoch)
+    assert manager.get(session.token).mode is InteractiveSessionMode.VIEW_ONLY
+    manager.confirm_editor(10, expected_epoch=manager.confirmation_epoch())
+    assert manager.get(session.token).mode is InteractiveSessionMode.CONTROL
 
 
 def test_expired_confirmation_rejects_input_even_without_watchdog():

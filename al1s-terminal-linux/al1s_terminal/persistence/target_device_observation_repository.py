@@ -26,9 +26,24 @@ class TargetDeviceObservationRepository:
         row = self._session.get(TargetDeviceObservationRow, adb_serial)
         return None if row is None else _target_observation(row)
 
-    def get_by_serials(
-        self, serials: tuple[str, ...]
-    ) -> dict[str, TargetDeviceObservationRecord]:
+    def list_bound(
+        self, *, after_serial: str | None, limit: int
+    ) -> list[TargetDeviceObservationRecord]:
+        if not 1 <= limit <= 100:
+            raise ValueError("path page limit must be 1 to 100")
+        query = select(TargetDeviceObservationRow).where(
+            TargetDeviceObservationRow.target_device_id.is_not(None)
+        )
+        if after_serial is not None:
+            query = query.where(TargetDeviceObservationRow.adb_serial > after_serial)
+        return [
+            _target_observation(row)
+            for row in self._session.scalars(
+                query.order_by(TargetDeviceObservationRow.adb_serial).limit(limit)
+            )
+        ]
+
+    def get_by_serials(self, serials: tuple[str, ...]) -> dict[str, TargetDeviceObservationRecord]:
         if not serials:
             return {}
         rows = self._session.scalars(

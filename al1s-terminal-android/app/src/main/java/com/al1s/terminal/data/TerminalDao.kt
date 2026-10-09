@@ -7,6 +7,38 @@ import androidx.room.Query
 
 @Dao
 interface TerminalDao {
+    @Insert(onConflict=OnConflictStrategy.IGNORE) fun insertQuickTest(value:QuickTestInboxEntity):Long
+    @Insert(onConflict=OnConflictStrategy.IGNORE) fun insertQuickResources(values:List<QuickTestResourceEntity>)
+    @Insert(onConflict=OnConflictStrategy.IGNORE) fun insertQuickEvents(values:List<QuickTestEventEntity>)
+    @Query("SELECT * FROM quick_test_inbox WHERE terminalId=:terminal AND state!='completed' ORDER BY createdAt LIMIT 1")
+    fun activeQuickTest(terminal:String):QuickTestInboxEntity?
+    @Query("SELECT * FROM quick_test_inbox WHERE state='running' ORDER BY createdAt LIMIT 1")
+    fun runningQuickTest():QuickTestInboxEntity?
+    @Query("UPDATE quick_test_inbox SET state='running',updatedAt=:now WHERE sessionId=:id AND state='queued' AND NOT EXISTS (SELECT 1 FROM inbox_tasks WHERE state IN ('queued','running')) AND NOT EXISTS (SELECT 1 FROM quick_test_inbox WHERE state='running')")
+    fun markQuickRunning(id:String,now:Long):Int
+    @Query("SELECT * FROM quick_test_resources WHERE sessionId=:id ORDER BY resourceKey")
+    fun quickResources(id:String):List<QuickTestResourceEntity>
+    @Query("UPDATE quick_test_inbox SET state=:state,resultJson=:result,updatedAt=:now WHERE sessionId=:id")
+    fun updateQuickTest(id:String,state:String,result:String?,now:Long):Int
+    @Query("UPDATE quick_test_inbox SET lastHelperSequence=:helper,lastEventSequence=:event WHERE sessionId=:id")
+    fun updateQuickCursor(id:String,helper:Long,event:Int):Int
+    @Query("SELECT * FROM quick_test_events WHERE sessionId=:id AND confirmed=0 ORDER BY sequence LIMIT 50")
+    fun pendingQuickEvents(id:String):List<QuickTestEventEntity>
+    @Query("UPDATE quick_test_events SET confirmed=1 WHERE sessionId=:id AND sequence<=:sequence")
+    fun confirmQuickEvents(id:String,sequence:Int):Int
+    @Insert(onConflict=OnConflictStrategy.IGNORE) fun insertSetupReport(value:SetupCheckReportEntity)
+    @Query("SELECT * FROM setup_check_reports WHERE terminalId=:terminal AND confirmed=0 ORDER BY createdAt LIMIT 1")
+    fun pendingSetupReport(terminal:String):SetupCheckReportEntity?
+    @Query("UPDATE setup_check_reports SET confirmed=1 WHERE requestId=:id AND terminalId=:terminal")
+    fun confirmSetupReport(id:String,terminal:String):Int
+    @Insert(onConflict=OnConflictStrategy.IGNORE) fun insertPackageResources(values: List<PackageResourceEntity>)
+    @Insert(onConflict=OnConflictStrategy.IGNORE) fun insertMaaLink(value: MaaAttemptLinkEntity)
+    @Query("SELECT * FROM package_resources WHERE packageId=:id ORDER BY resourceKey") fun packageResources(id: String): List<PackageResourceEntity>
+    @Query("SELECT * FROM maa_attempt_links WHERE attemptId=:id") fun maaLink(id: String): MaaAttemptLinkEntity?
+    @Query("UPDATE maa_attempt_links SET helperEpoch=:epoch,helperStatus=:status,updatedAt=:now WHERE attemptId=:id")
+    fun updateMaaLink(id: String, epoch: String?, status: String, now: Long): Int
+    @Query("UPDATE maa_attempt_links SET lastEventSequence=:sequence,updatedAt=:now WHERE attemptId=:id AND lastEventSequence<:sequence")
+    fun confirmMaaEvents(id: String, sequence: Long, now: Long): Int
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     fun insertInbox(task: InboxTaskEntity): Long
 
@@ -54,7 +86,9 @@ interface TerminalDao {
 
     @Query(
         "UPDATE inbox_tasks SET state = 'running', updatedAt = :now " +
-            "WHERE packageId = :packageId AND state = 'queued'",
+            "WHERE packageId = :packageId AND state = 'queued' " +
+            "AND NOT EXISTS (SELECT 1 FROM inbox_tasks WHERE state = 'running') " +
+            "AND NOT EXISTS (SELECT 1 FROM quick_test_inbox WHERE state = 'running')",
     )
     fun markRunning(packageId: String, now: Long): Int
 

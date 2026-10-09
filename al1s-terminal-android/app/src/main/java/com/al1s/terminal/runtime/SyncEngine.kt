@@ -20,7 +20,28 @@ class SyncEngine(
     private val identityStore: IdentityStore,
     private val database: TerminalDatabase,
 ) {
-    fun runOnce(): SyncResult = TerminalConnectionGate.withConnection { runBlocking { cycle() } }
+    fun runOnce(): SyncResult = AgentReconciliationGate.tryRun {
+        TerminalConnectionGate.withConnection { runBlocking { cycle() } }
+    } ?: SyncResult(false, 0, 0, "reconciliation_busy")
+
+    fun heartbeatOnly(): Boolean = TerminalConnectionGate.withConnection {
+        val identity = identityStore.load() ?: return@withConnection false
+        val configuration = identityStore.configuration() ?: return@withConnection false
+        val platform=PlatformClient(configuration.first)
+        try {
+            if(identityStore.needsOwnedState())identityStore.updateOwnedState(platform.ownIdentity(identity.credential,identity.terminalId))
+            val current=identityStore.load() ?: return@withConnection false
+            val version = platform.heartbeat(
+                current.credential, current.terminalId, current.terminalRowVersion,identityStore.acceptanceStatus(),
+            )
+            identityStore.updateTerminalRowVersion(version)
+            true
+        } catch (error: PlatformException) {
+            if (error.statusCode == 401) identityStore.clearCredential()
+            if(error.statusCode==409)runCatching {identityStore.updateOwnedState(platform.ownIdentity(identity.credential,identity.terminalId))}
+            false
+        }
+    }
 
     private suspend fun cycle(): SyncResult {
         val identity = identityStore.load() ?: return SyncResult(false, 0, 0, "registration_required")
@@ -28,32 +49,27 @@ class SyncEngine(
             ?: return SyncResult(false, 0, 0, "configuration_required")
         val platform = PlatformClient(configuration.first)
         val dispatcher = OutboxDispatcher(database, platform, identityStore)
-        val execution = ExecutionCoordinator(database, dispatcher)
-        execution.recoverInterrupted()
 
         var online = false
         var commandsSeen = 0
         var reportsSent = 0
         try {
-            val rowVersion = platform.heartbeat(
-                identity.credential,
-                identity.terminalId,
-                identity.terminalRowVersion,
-            )
-            identityStore.updateTerminalRowVersion(rowVersion)
-            if (identity.capabilityRevision == 0) {
+            val capability=SystemCapability.read(context)
+            val fingerprint=CapabilityFingerprint.of(capability)
+            if (identity.capabilityRevision == 0 || identityStore.capabilityFingerprint()!=fingerprint) {
                 val revision = platform.publishCapability(
                     identity.credential,
                     identity.terminalId,
-                    1,
-                    SystemCapability.read(context),
+                    identity.capabilityRevision+1,
+                    capability,
                 )
-                identityStore.updateCapabilityRevision(revision)
+                identityStore.confirmCapability(revision,fingerprint)
+                identityStore.updateOwnedState(platform.ownIdentity(identity.credential,identity.terminalId))
             }
             reportsSent += dispatcher.flush()
             val commands = platform.listCommands(identity.credential)
             commandsSeen = commands.size
-            val receiver = PackageReceiver(database, platform, identity)
+            val receiver = PackageReceiver(database, platform, identity, context)
             for (command in commands) receiver.receive(command)
             reportsSent += dispatcher.flush()
             online = true
@@ -61,9 +77,7 @@ class SyncEngine(
             if (error.statusCode == 401) identityStore.clearCredential()
         }
 
-        val executionResult = execution.executeNext()
-        if (online) reportsSent += runCatching { dispatcher.flush() }.getOrDefault(0)
-        return SyncResult(online, commandsSeen, reportsSent, executionResult)
+        return SyncResult(online, commandsSeen, reportsSent, "control_activation_required")
     }
 
 }
