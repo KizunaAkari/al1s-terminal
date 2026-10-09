@@ -208,6 +208,7 @@ class QuickTestDefinitionPayload(BaseModel):
     schema_version: int = Field(ge=1)
     manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     manifest: dict[str, Any]
+    canonical_manifest: str | None = None
     capability_requirements: CapabilityRequirementsPayload
     blobs: list[QuickTestDefinitionBlobPayload]
 

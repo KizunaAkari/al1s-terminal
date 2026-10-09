@@ -15,6 +15,17 @@ class PlatformClient(
     },
 ) {
     private val origin = PlatformEndpoint.normalize(baseUrl)
+    fun ownIdentity(credential:String,expectedTerminal:String):JSONObject {
+        val result=request("GET","/api/v1/terminal/identity",credential)
+        require(result.getString("terminal_id")==expectedTerminal)
+        require(result.getInt("row_version")>0 && result.getString("acceptance_status") in setOf("accepting","draining","disabled"))
+        return result
+    }
+    fun editorSessions(credential: String): JSONArray =
+        request("GET", "/api/v1/terminal/editor-sessions?limit=20", credential, responseArray=true).getJSONArray("items")
+
+    fun editorReport(credential: String, session: String, body: JSONObject) =
+        request("POST", "/api/v1/terminal/editor-sessions/$session/report", credential, body)
     fun register(
         registrationCode: String,
         installationId: String,
@@ -41,7 +52,7 @@ class PlatformClient(
         )
     }
 
-    fun heartbeat(credential: String, terminalId: String, rowVersion: Int): Int {
+    fun heartbeat(credential: String, terminalId: String, rowVersion: Int, acceptance:String="accepting"): Int {
         val response = request(
             "POST",
             "/api/v1/terminals/$terminalId/heartbeat",
@@ -49,7 +60,7 @@ class PlatformClient(
             JSONObject()
                 .put("expected_version", rowVersion)
                 .put("service_status", "online")
-                .put("acceptance_status", "accepting")
+                .put("acceptance_status", acceptance)
                 .put("agent_version", AGENT_VERSION),
         )
         return response.getInt("row_version")
@@ -96,6 +107,7 @@ class PlatformClient(
             attemptId = response.getString("attempt_id"),
             packageHash = response.getString("package_hash"),
             body = response.getJSONObject("body"),
+            canonicalBody = response.optString("canonical_body").takeIf { it.isNotBlank() && it != "null" },
         )
     }
 
@@ -155,12 +167,15 @@ class PlatformClient(
 
     fun sendAttemptResult(credential: String, report: JSONObject) {
         val attemptId = report.getString("attempt_id")
-        request(
+        val response=request(
             "POST",
             "/api/v1/terminal/attempts/$attemptId/result",
             credential,
             report.without("attempt_id"),
         )
+        if(response.optString("report_id")!=report.getString("report_id") ||
+            response.optString("attempt_status") !in setOf("ended","cancelled","terminated"))
+            throw PlatformException(0,"attempt_result_unconfirmed","Attempt result was not confirmed")
     }
 
     fun acknowledgeCancellation(credential: String, report: JSONObject) {
@@ -173,11 +188,13 @@ class PlatformClient(
         )
     }
 
-    private fun request(
+    internal fun request(
         method: String,
         path: String,
         credential: String? = null,
         body: JSONObject? = null,
+        headers: Map<String,String> = emptyMap(),
+        responseArray: Boolean = false,
     ): JSONObject {
         var connection: HttpURLConnection? = null
         try {
@@ -189,6 +206,7 @@ class PlatformClient(
             current.readTimeout = 15_000
             current.setRequestProperty("Accept", "application/json")
             if (credential != null) current.setRequestProperty("Authorization", "Bearer $credential")
+            headers.forEach { (key,value)->current.setRequestProperty(key,value) }
             if (body != null) {
                 current.doOutput = true
                 current.setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -200,7 +218,8 @@ class PlatformClient(
             val text = (if (status in 200..299) current.inputStream else current.errorStream)
                 ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             if (status !in 200..299) throw platformError(status, text)
-            return if (text.isBlank()) JSONObject() else JSONObject(text)
+            return if (responseArray) JSONObject().put("items", JSONArray(text))
+                else if (text.isBlank()) JSONObject() else JSONObject(text)
         } catch (error: IOException) {
             throw PlatformException(0, "platform_unavailable", "Platform is unavailable", error)
         } finally {
@@ -224,7 +243,7 @@ class PlatformClient(
         JSONObject(toString()).also { it.remove(key) }
 
     companion object {
-        const val AGENT_VERSION = "0.1.0-xiaomi-root-demo"
-        val PROVIDER_KEYS = JSONArray().put("android.xiaomi.root.demo")
+        const val AGENT_VERSION = "0.2.0-android-direct"
+        val PROVIDER_KEYS: JSONArray get() = JSONArray()
     }
 }

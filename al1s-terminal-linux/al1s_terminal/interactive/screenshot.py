@@ -1,4 +1,5 @@
 """One bounded native screenshot; never accept an ADB command from the browser."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,9 +10,37 @@ MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024
 
 
 async def capture_png(adb: str, serial: str) -> bytes:
+    async with asyncio.timeout(10):
+        body = await _capture_once(adb, serial)
+        grace = asyncio.get_running_loop().time() + 2
+        while _black_frame(body) and asyncio.get_running_loop().time() < grace:
+            await asyncio.sleep(0.1)
+            body = await _capture_once(adb, serial)
+        return body
+
+
+def _black_frame(body: bytes) -> bool:
+    # Use the existing Maa image stack; no parallel PNG decoder or dependency.
+    import cv2
+    import numpy as np
+
+    try:
+        image = cv2.imdecode(np.frombuffer(body, dtype=np.uint8), cv2.IMREAD_COLOR)
+        return image is not None and not bool(np.any(image))
+    except (cv2.error, ValueError):
+        return False  # Existing PNG validation and browser decoding retain their checks.
+
+
+async def _capture_once(adb: str, serial: str) -> bytes:
     process = await asyncio.create_subprocess_exec(
-        adb, "-s", serial, "exec-out", "screencap", "-p",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        adb,
+        "-s",
+        serial,
+        "exec-out",
+        "screencap",
+        "-p",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
     )
     try:
         async with asyncio.timeout(10):

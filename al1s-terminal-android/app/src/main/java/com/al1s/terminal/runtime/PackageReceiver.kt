@@ -18,6 +18,7 @@ class PackageReceiver(
     private val database: TerminalDatabase,
     private val platform: PlatformClient,
     private val identity: TerminalIdentity,
+    private val context: android.content.Context? = null,
 ) {
     suspend fun receive(command: TerminalCommand) {
         when (command.kind) {
@@ -37,13 +38,29 @@ class PackageReceiver(
             queuePackageReceipt(command, packageId, "rejected", error.code, error.message)
             return
         }
+        val value = requireNotNull(validated.getOrNull())
+        if (value.action == "maa") {
+            val application = checkNotNull(context) { "maa_resource_receiver_required" }
+            try {
+                MaaPackagePreflight(application).receive(taskPackage, value, identity)
+            } catch (failure: com.al1s.terminal.protocol.PlatformException) { throw failure }
+            catch (failure: IllegalArgumentException) {
+                queuePackageReceipt(command, packageId, "rejected", "maa_definition_unsupported", failure.message)
+                return
+            }
+        }
         val now = System.currentTimeMillis()
+        val persistedBody = if (value.action == "maa") {
+            com.al1s.terminal.resources.CanonicalBodyStore(java.io.File(checkNotNull(context).filesDir,"maa/bodies"))
+                .write(taskPackage.packageHash,value.canonicalBody)
+            ""
+        } else value.canonicalBody
         val task = InboxTaskEntity(
             packageId = packageId,
             commandId = command.commandId,
             attemptId = command.attemptId,
             packageHash = taskPackage.packageHash,
-            bodyJson = taskPackage.body.toString(),
+            bodyJson = persistedBody,
             action = requireNotNull(validated.getOrNull()).action,
             state = InboxState.RECEIVED,
             packageReceiptReportId = UUID.randomUUID().toString(),
@@ -54,6 +71,9 @@ class PackageReceiver(
         )
         database.withTransaction {
             if (database.terminalDao().insertInbox(task) >= 0) {
+                if (value.action == "maa") database.terminalDao().insertPackageResources(value.resources.map {
+                    com.al1s.terminal.data.PackageResourceEntity(packageId, it.key, it.blobId, it.sha256, it.size, it.mediaType, it.role)
+                })
                 database.terminalDao().insertOutbox(acceptedReceipt(task, now))
             }
         }

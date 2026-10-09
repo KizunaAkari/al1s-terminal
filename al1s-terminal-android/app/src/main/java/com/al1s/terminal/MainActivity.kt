@@ -15,6 +15,7 @@ import android.widget.TextView
 import com.al1s.terminal.runtime.RegistrationService
 import com.al1s.terminal.runtime.SyncWorker
 import com.al1s.terminal.runtime.TerminalForegroundService
+import com.al1s.terminal.runtime.AgentCoordinator
 import java.util.concurrent.Executors
 
 @SuppressLint("SetTextI18n")
@@ -45,22 +46,41 @@ class MainActivity : Activity() {
             setPadding(48, 48, 48, 48)
         }
         container.addView(TextView(this).apply {
-            text = "AL-1S 小米 Root 终端 Demo"
+            text = "AL-1S Android 直连终端"
             textSize = 24f
         })
         container.addView(TextView(this).apply {
-            text = "只执行内置 root_probe；先安装平台公开 CA，再填写证书匹配的 HTTPS 地址。"
+            text = "注册不需要 Root 或 Linux。先信任平台公开 CA，再填写匹配的 HTTPS 地址；平台连接与手机控制权限分别检查。"
             textSize = 14f
             setPadding(0, 12, 0, 24)
         })
         platformUrl = input("平台地址，例如 https://al1s.local:8443", configuration?.first)
-        displayName = input("终端名称", configuration?.second ?: "Xiaomi Root Demo")
+        displayName = input("终端名称", configuration?.second ?: "Android 直连终端")
         registrationCode = input("一次性注册码", null)
         container.addView(platformUrl)
         container.addView(displayName)
         container.addView(registrationCode)
+        container.addView(button("检查平台 HTTPS") {
+            val address=platformUrl.text.toString()
+            status.text="正在检查证书与主机名…"
+            executor.execute {
+                val result=runCatching {com.al1s.terminal.protocol.PlatformTlsProbe.check(address)}
+                runOnUiThread {status.text=result.fold({"HTTPS 证书与主机名已验证 · HTTP $it"},
+                    {"HTTPS 检查失败：${it.javaClass.simpleName}"})}
+            }
+        })
         container.addView(button("注册或恢复终端") { register() })
         container.addView(button("启动前台任务服务") { startTerminalService() })
+        container.addView(button("本机配对与激活") {
+            startActivity(Intent(this, com.al1s.terminal.activation.ActivationActivity::class.java))
+        })
+        container.addView(button("首次设置与手动检查") {
+            startActivity(Intent(this, com.al1s.terminal.setup.SetupActivity::class.java))
+        })
+        container.addView(button("停用直连终端") {
+            AgentCoordinator(this).stopByUser()
+            status.text = "已停用；不会自动重启服务"
+        })
         container.addView(button("立即同步一次") { syncOnce() })
         status = TextView(this).apply {
             textSize = 15f
@@ -109,9 +129,8 @@ class MainActivity : Activity() {
     }
 
     private fun startTerminalService() {
-        startForegroundService(Intent(this, TerminalForegroundService::class.java))
-        SyncWorker.schedule(this)
-        status.text = "前台任务服务已启动"
+        status.text = if (AgentCoordinator(this).enableAndStart()) "前台任务服务已启动"
+            else "服务未启动：请先注册终端并确认手机已解锁"
     }
 
     private fun syncOnce() {

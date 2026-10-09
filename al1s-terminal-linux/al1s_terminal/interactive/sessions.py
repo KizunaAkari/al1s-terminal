@@ -93,6 +93,9 @@ class InteractiveSessionManager:
         self._sessions: dict[str, _InteractiveSession] = {}
         self._automation_serial: str | None = None
         self._platform_valid_until = 0.0
+        self._editor_valid_until: float | None = None
+        self._confirmation_epoch = 0
+        self._input_authority: Callable[[str], bool] = lambda _serial: True
         self._lock = threading.RLock()
 
     def confirm_platform(self, valid_for_seconds: float) -> None:
@@ -108,6 +111,8 @@ class InteractiveSessionManager:
     def disconnect_platform(self) -> None:
         with self._lock:
             self._platform_valid_until = 0.0
+            self._editor_valid_until = 0.0
+            self._confirmation_epoch += 1
             connections = tuple(c for s in self._sessions.values() for c in s.control_connections)
             for session in self._sessions.values():
                 session.mode = InteractiveSessionMode.VIEW_ONLY
@@ -115,9 +120,36 @@ class InteractiveSessionManager:
         if connections:
             self._close_connections(connections, "platform connection unavailable")
 
+    def confirmation_epoch(self) -> int:
+        with self._lock:
+            return self._confirmation_epoch
+
+    def confirm_editor(
+        self, valid_for_seconds: float, *, expected_epoch: int | None = None,
+    ) -> None:
+        self.expire_platform_confirmation()
+        with self._lock:
+            if expected_epoch is not None and expected_epoch != self._confirmation_epoch:
+                return
+            self._editor_valid_until = self._clock() + max(0.0, min(10.0, valid_for_seconds))
+            for session in self._sessions.values():
+                session.mode = self._mode_for(session.serial)
+        self.expire_platform_confirmation()
+
+    def platform_transient_failure(self) -> None:
+        # No new grant: only an already confirmed editor window may survive a hiccup.
+        with self._lock:
+            confirmed = self._editor_valid_until is not None
+        if not confirmed:
+            self.disconnect_platform()
+        else:
+            self.expire_platform_confirmation()
+
     def expire_platform_confirmation(self) -> None:
         with self._lock:
-            if self._clock() < self._platform_valid_until:
+            if (self._clock() < self._platform_valid_until
+                    and (self._editor_valid_until is None
+                         or self._clock() < self._editor_valid_until)):
                 return
             connections = tuple(c for s in self._sessions.values() for c in s.control_connections)
             for session in self._sessions.values():
@@ -138,10 +170,32 @@ class InteractiveSessionManager:
             send()
             session.last_activity = self._clock()
 
+    def can_prepare(self, token: str) -> bool:
+        with self._lock:
+            serial = self._live_session(token).serial
+            return self._mode_for(serial) is InteractiveSessionMode.CONTROL
+
+    def prepare_screen(self, token: str, prepare: Callable[[str], None]) -> bool:
+        # Serialize bounded wake input with automation and capability revocation.
+        with self._lock:
+            session = self._live_session(token)
+            if self._mode_for(session.serial) is InteractiveSessionMode.VIEW_ONLY:
+                return False
+            prepare(session.serial)
+            session.last_activity = self._clock()
+            return True
+
     def _mode_for(self, serial: str) -> InteractiveSessionMode:
-        if self._clock() >= self._platform_valid_until or self._automation_serial == serial:
+        if (self._clock() >= self._platform_valid_until or self._automation_serial == serial
+                or (self._editor_valid_until is not None
+                    and self._clock() >= self._editor_valid_until)
+                or not self._input_authority(serial)):
             return InteractiveSessionMode.VIEW_ONLY
         return InteractiveSessionMode.CONTROL
+
+    def set_input_authority(self, authority: Callable[[str], bool]) -> None:
+        with self._lock:
+            self._input_authority = authority
 
     def create(self, serial: str) -> InteractiveSessionSnapshot:
         normalized = serial.strip()

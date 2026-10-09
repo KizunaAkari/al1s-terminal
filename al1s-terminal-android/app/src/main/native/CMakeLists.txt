@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(al1s_android_maa LANGUAGES CXX)
+add_library(al1s_maa SHARED MaaBridge.cpp AndroidDeviceAdapter.cpp MaaTaskBridge.cpp MaaContextBridge.cpp MaaCallbacks.cpp)
+target_compile_features(al1s_maa PRIVATE cxx_std_17)
+target_include_directories(al1s_maa PRIVATE include)
+target_link_libraries(al1s_maa PRIVATE dl log)
+target_link_options(al1s_maa PRIVATE "-Wl,-z,max-page-size=16384")

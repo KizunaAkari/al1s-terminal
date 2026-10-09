@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
+from threading import RLock
 from uuid import UUID, uuid4
 
 import structlog
@@ -30,8 +31,13 @@ class EditorCoordinator:
         self._connections: dict[UUID, dict[str, str]] = {}
         self._requests: dict[UUID, EditorRequest] = {}
         self._reported: dict[UUID, datetime] = {}
+        self._lock = RLock()
 
     def reconcile(self) -> None:
+        with self._lock:
+            self._reconcile()
+
+    def _reconcile(self) -> None:
         identity = self._secrets.load()
         if identity is None:
             return
@@ -119,3 +125,14 @@ class EditorCoordinator:
         connection = self._connections.pop(session_id, None)
         if connection is not None and self._relay is not None:
             self._relay.stop_session(connection["session_token"])
+
+    def release_device(self, device: UUID) -> None:
+        with self._lock:
+            identity = self._secrets.load()
+            for request in tuple(self._requests.values()):
+                if request.device_id == device:
+                    self._close(request.session_id)
+                    if identity:
+                        self._platform.report(
+                            identity.credential, request, self._instance, "closed"
+                        )

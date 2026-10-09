@@ -1,6 +1,6 @@
 # AL-1S Terminals
 
-本仓库包含 [Linux 终端](al1s-terminal-linux/README.md)和 [Android 终端](al1s-terminal-android/README.md)。Linux 执行 Maa/ADB/RKNN 任务并持久保存补报事实；Android 当前提供已 root 手机的安全 Demo。两端使用[平台](https://github.com/KizunaAkari/al1s-platform)发放的一次性注册码和独立终端凭据。
+本仓库包含 [Linux 终端](al1s-terminal-linux/README.md)和 [Android 终端](al1s-terminal-android/README.md)。Linux 执行 Maa/ADB/RKNN 任务并持久保存补报事实；Android 支持独立注册、本机无线配对、受限辅助服务和 Native Maa 接入。两端使用[平台](https://github.com/KizunaAkari/al1s-platform)发放的一次性注册码和独立终端凭据；连接在线不代表全部真机业务已验收。
 
 ```sh
 git clone https://github.com/KizunaAkari/al1s-terminal.git
@@ -37,7 +37,7 @@ docker buildx build --platform linux/arm64 --load -f Dockerfile.arm64 -t al1s-te
 
 ## Android APK
 
-Android 终端不构建 Docker 镜像。需要 JDK 17+、Android SDK 36 和 Gradle 8.13；本仓库没有 Gradle Wrapper，可使用本机 Gradle 或 Android Studio 配置对应版本。
+Android 终端不构建 Docker 镜像。需要 JDK 17+、Android SDK 36、NDK 27.2.12479018、CMake 3.22.1 和 Gradle 8.13；本仓库没有 Gradle Wrapper，可使用本机 Gradle 或 Android Studio 配置对应版本。构建使用 `app/src/main/jniLibs/` 的预编译 Native 库及 `app/src/main/assets/` 的模型/资源，保留上游文件，不将 `.cxx/` 等中间产物提交。
 
 ```sh
 cd al1s-terminal-android
