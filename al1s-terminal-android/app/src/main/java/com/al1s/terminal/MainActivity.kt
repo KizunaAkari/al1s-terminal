@@ -6,6 +6,7 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -38,6 +39,13 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
+    override fun onResume() {
+        super.onResume()
+        runCatching { AgentCoordinator(this).restore() }
+            .onSuccess { if (it) Log.i("AL1S-Agent", "restore_requested:foreground") }
+            .onFailure { Log.w("AL1S-Agent", "restore_deferred:foreground:${it.javaClass.simpleName}") }
+    }
+
     private fun buildContent(): ScrollView {
         val application = application as TerminalApplication
         val configuration = application.identityStore.configuration()
@@ -65,7 +73,7 @@ class MainActivity : Activity() {
             status.text="正在检查证书与主机名…"
             executor.execute {
                 val result=runCatching {com.al1s.terminal.protocol.PlatformTlsProbe.check(address)}
-                runOnUiThread {status.text=result.fold({"HTTPS 证书与主机名已验证 · HTTP $it"},
+                runOnUiThread {status.text=result.fold({com.al1s.terminal.protocol.PlatformTlsProbe.resultText(it)},
                     {"HTTPS 检查失败：${it.javaClass.simpleName}"})}
             }
         })

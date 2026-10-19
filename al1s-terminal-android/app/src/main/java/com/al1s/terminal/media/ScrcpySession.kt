@@ -3,9 +3,9 @@ package com.al1s.terminal.media
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.os.ParcelFileDescriptor
+import com.al1s.terminal.resources.copyWithSha256
 import java.io.File
 import java.nio.file.Files
-import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
@@ -26,10 +26,13 @@ class ScrcpySession(private val apk: String) : AutoCloseable {
             ZipFile(apk).use { archive ->
                 val entry = checkNotNull(archive.getEntry("assets/scrcpy-server-v3.3.4"))
                 require(entry.size in 1..(4 * 1024 * 1024))
-                archive.getInputStream(entry).use { input -> server.outputStream().use { input.copyTo(it) } }
+                archive.getInputStream(entry).use { input ->
+                    server.outputStream().use { output ->
+                        val hash = copyWithSha256(input, output)
+                        check(hash == SHA256) { "scrcpy_asset_hash_mismatch" }
+                    }
+                }
             }
-            val hash = MessageDigest.getInstance("SHA-256").digest(server.readBytes()).joinToString("") { "%02x".format(it) }
-            check(hash == SHA256) { "scrcpy_asset_hash_mismatch" }
             val scid = "%08x".format(SecureRandom().nextInt(Int.MAX_VALUE))
             val builder = ProcessBuilder("/system/bin/app_process", "/", "com.genymobile.scrcpy.Server", "3.3.4",
                 "scid=$scid", "tunnel_forward=true", "audio=false", "control=true", "video_codec=h264",

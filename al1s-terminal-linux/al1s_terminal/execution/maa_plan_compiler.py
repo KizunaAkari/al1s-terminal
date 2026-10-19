@@ -19,9 +19,10 @@ class MaaPlanCompiler:
         self._data_dir = data_dir
 
     def compile(self, plan: MaaExecutionPlan) -> tuple[CompiledMaaTask, ...]:
+        encoded_resources: dict[tuple[Path, str], str] = {}
         return tuple(
             MaaPipelineCompiler(self._data_dir).compile(
-                self._script(module, plan, stack=()),
+                self._script(module, plan, stack=(), encoded_resources=encoded_resources),
             )
             for module in plan.modules
         )
@@ -32,6 +33,7 @@ class MaaPlanCompiler:
         plan: MaaExecutionPlan,
         *,
         stack: tuple[str, ...],
+        encoded_resources: dict[tuple[Path, str], str],
     ) -> dict[str, Any]:
         if module.definition_key in stack or len(stack) >= 20:
             raise MaaDefinitionError(
@@ -43,10 +45,13 @@ class MaaPlanCompiler:
             "version": 2,
             "script_type": module.script_type,
             "target": dict(module.target),
-            "steps": [self._step(item, plan, stack=next_stack) for item in module.steps],
+            "steps": [
+                self._step(item, plan, stack=next_stack, encoded_resources=encoded_resources)
+                for item in module.steps
+            ],
             "global_popups": [
                 {
-                    **self._resolve_resources(rule, plan.resources),
+                    **self._resolve_resources(rule, plan.resources, encoded_resources),
                     "_definition_key": module.definition_key,
                 }
                 for rule in module.independent_rules
@@ -60,13 +65,17 @@ class MaaPlanCompiler:
         plan: MaaExecutionPlan,
         *,
         stack: tuple[str, ...],
+        encoded_resources: dict[tuple[Path, str], str],
     ) -> dict[str, Any]:
         action_id = value.get("action_id")
         parameters = value.get("parameters")
         wrappers = value.get("wrappers", [])
         if not isinstance(action_id, str) or not isinstance(parameters, dict):
             raise MaaDefinitionError("maa_step_invalid", "Maa step payload is invalid")
-        step = {"action": action_id, **self._resolve_resources(parameters, plan.resources)}
+        step = {
+            "action": action_id,
+            **self._resolve_resources(parameters, plan.resources, encoded_resources),
+        }
         for wrapper in wrappers:
             if not isinstance(wrapper, dict):
                 raise MaaDefinitionError("maa_wrapper_invalid", "Maa wrapper is invalid")
@@ -74,7 +83,7 @@ class MaaPlanCompiler:
             raw_parameters = wrapper.get("parameters", {})
             if not isinstance(raw_parameters, dict):
                 raise MaaDefinitionError("maa_wrapper_invalid", "Maa wrapper is invalid")
-            resolved = self._resolve_resources(raw_parameters, plan.resources)
+            resolved = self._resolve_resources(raw_parameters, plan.resources, encoded_resources)
             if kind == "conditional_skip":
                 step["skip_condition"] = resolved
             elif kind == "post_assertion":
@@ -109,7 +118,9 @@ class MaaPlanCompiler:
                     "enabled": True,
                     "max_retries": resolved.get("max_retries"),
                     "process_script_name": recovery.definition_key,
-                    "process_script": self._script(recovery, plan, stack=stack),
+                    "process_script": self._script(
+                        recovery, plan, stack=stack, encoded_resources=encoded_resources,
+                    ),
                 }
             else:
                 raise MaaDefinitionError(
@@ -118,7 +129,12 @@ class MaaPlanCompiler:
                 )
         return step
 
-    def _resolve_resources(self, value: Any, resources: dict[str, Path]) -> Any:
+    def _resolve_resources(
+        self,
+        value: Any,
+        resources: dict[str, Path],
+        encoded_resources: dict[tuple[Path, str], str],
+    ) -> Any:
         if isinstance(value, dict):
             resource_key = value.get("$resource")
             if resource_key is not None:
@@ -129,9 +145,20 @@ class MaaPlanCompiler:
                         "Maa definition references an unavailable resource",
                     )
                 media_type = str(value.get("media_type") or "image/png")
-                encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-                return f"data:{media_type};base64,{encoded}"
-            return {key: self._resolve_resources(child, resources) for key, child in value.items()}
+                cache_key = (path, media_type)
+                encoded = encoded_resources.get(cache_key)
+                if encoded is None:
+                    encoded_bytes = base64.b64encode(path.read_bytes()).decode("ascii")
+                    encoded = f"data:{media_type};base64,{encoded_bytes}"
+                    encoded_resources[cache_key] = encoded
+                return encoded
+            return {
+                key: self._resolve_resources(child, resources, encoded_resources)
+                for key, child in value.items()
+            }
         if isinstance(value, list):
-            return [self._resolve_resources(child, resources) for child in value]
+            return [
+                self._resolve_resources(child, resources, encoded_resources)
+                for child in value
+            ]
         return value

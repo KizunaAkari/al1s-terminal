@@ -72,7 +72,7 @@ def test_wait_order_failure_and_remaining_budget(monkeypatch, success, budget, e
 
 
 def test_system_wait_wrapper_compiles_and_an_old_terminal_rejects_it(tmp_path, monkeypatch):
-    from test_post_execution_wait import definition_manifest
+    from tests.test_post_execution_wait import definition_manifest
 
     from al1s_terminal.execution import maa_definition
 

@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
+import android.net.ConnectivityManager
+import android.net.Network
 import android.util.Log
 import com.al1s.terminal.MainActivity
 import com.al1s.terminal.R
@@ -27,12 +29,19 @@ class TerminalForegroundService : Service() {
     private lateinit var editorCoordinator: com.al1s.terminal.editor.AndroidEditorCoordinator
     private val policy = AgentRetryPolicy()
     private val active = AtomicBoolean(true)
+    private lateinit var reachability:PlatformReachability
+    private val reachabilityHttp=okhttp3.OkHttpClient.Builder()
+        .followRedirects(false).followSslRedirects(false)
+        .connectTimeout(8,TimeUnit.SECONDS).writeTimeout(3,TimeUnit.SECONDS)
+        .readTimeout(0,TimeUnit.SECONDS).build()
+    private var networkCallback:ConnectivityManager.NetworkCallback?=null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, notification("等待同步"))
         if (!AgentCoordinator(this).mayRun()) { stopSelf(); return }
+        startReachability()
         scheduleHeartbeat(0)
         val app = application as TerminalApplication
         val quick = QuickTestCoordinator(this,app.database,app.identityStore)
@@ -79,6 +88,12 @@ class TerminalForegroundService : Service() {
 
     override fun onDestroy() {
         active.set(false)
+        networkCallback?.let {callback->runCatching {
+            getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback)
+        }}
+        if(::reachability.isInitialized)reachability.close()
+        reachabilityHttp.dispatcher.executorService.shutdownNow()
+        reachabilityHttp.connectionPool.evictAll()
         executor.shutdownNow()
         reconciliation.shutdownNow()
         controlRecovery.shutdownNow()
@@ -98,10 +113,8 @@ class TerminalForegroundService : Service() {
         executor.schedule({
             if (!active.get() || !AgentCoordinator(this).mayRun()) { stopSelf(); return@schedule }
             try {
-                val online = (application as TerminalApplication).syncEngine().heartbeatOnly()
-                if (online) policy.connected() else policy.failureDelaySeconds()
-                val summary = if (online) "平台已连接 · 控制激活状态独立检查" else "连接未确认 · 保留身份并重试"
-                getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(summary))
+                runCatching {reachability.reconcile()}
+                heartbeat()
             } catch (error: Exception) {
                 policy.failureDelaySeconds()
                 Log.w("AL1S-Sync", "heartbeat_failed:${error.javaClass.simpleName.take(40)}")
@@ -109,6 +122,40 @@ class TerminalForegroundService : Service() {
                 if (active.get()) runCatching { scheduleHeartbeat(policy.jitteredDelaySeconds()) }
             }
         }, delay, TimeUnit.SECONDS)
+    }
+
+    private fun heartbeat() {
+        val online=(application as TerminalApplication).syncEngine().heartbeatOnly()
+        if(online)policy.connected() else policy.failureDelaySeconds()
+        val summary=if(online)"平台已连接 · 控制激活状态独立检查" else "连接未确认 · 保留身份并重试"
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID,notification(summary))
+    }
+
+    private fun connectionWork(action:()->Unit) {
+        runCatching {executor.execute {
+            if(active.get() && AgentCoordinator(this).mayRun())runCatching(action)
+                .onFailure {Log.w("AL1S-Reachability","connection_failed:${it.javaClass.simpleName}")}
+        }}
+    }
+
+    private fun startReachability() {
+        reachability=PlatformReachability({
+            com.al1s.terminal.security.TerminalConnectionGate.withConnection {
+                val store=(application as TerminalApplication).identityStore
+                val identity=store.load()
+                val origin=store.configuration()?.first
+                if(active.get() && identity!=null && origin!=null)
+                    ReachabilityIdentity(origin,identity.terminalId,identity.credential) else null
+            }
+        },{request,listener->reachabilityHttp.newWebSocket(request,listener)},
+            {connectionWork {Log.i("AL1S-Reachability","connected");heartbeat()}})
+        val callback=object:ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network:Network) {connectionWork {reachability.reconcile(networkChanged=true)}}
+        }
+        runCatching {
+            getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(callback)
+            networkCallback=callback
+        }.onFailure {Log.w("AL1S-Reachability","network_callback_failed:${it.javaClass.simpleName}")}
     }
 
     private fun createNotificationChannel() {

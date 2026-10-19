@@ -1,6 +1,7 @@
 package com.al1s.terminal.runtime
 
 import android.content.Context
+import android.util.Log
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -14,6 +15,9 @@ import java.util.concurrent.TimeUnit
 class SyncWorker(context: Context, parameters: WorkerParameters) : Worker(context, parameters) {
     override fun doWork(): Result {
         if (!AgentCoordinator(applicationContext).enabled()) return Result.success()
+        runCatching { AgentCoordinator(applicationContext).restore(schedulePeriodicWork = false) }
+            .onSuccess { if (it) Log.i("AL1S-Agent", "restore_requested:worker") }
+            .onFailure { Log.w("AL1S-Agent", "restore_deferred:worker:${it.javaClass.simpleName}") }
         val result = (applicationContext as TerminalApplication).syncEngine().runOnce()
         return if (result.online || result.execution != "registration_required") {
             Result.success()

@@ -21,10 +21,10 @@ class AgentCoordinator(private val context: Context) {
         SyncWorker.cancel(context)
     }
 
-    fun restore(): Boolean {
+    fun restore(schedulePeriodicWork: Boolean = true): Boolean {
         if (!mayRun()) return false
+        if (schedulePeriodicWork) SyncWorker.schedule(context)
         context.startForegroundService(Intent(context, TerminalForegroundService::class.java))
-        SyncWorker.schedule(context)
         return true
     }
 

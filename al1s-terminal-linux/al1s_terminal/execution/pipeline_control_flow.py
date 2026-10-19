@@ -198,7 +198,8 @@ class PipelineControlFlowCompiler(PipelineBuilder):
     def _wire_retry_target(self, route: _FailureRetryRoute, target_plan: _StepPlan) -> None:
         target_index = route.target_index
         self.context.pipeline[route.entry_name]["custom_action_param"]["reset_hit_count_nodes"] = [
-            name for name in target_plan.nodes
+            name
+            for name in target_plan.nodes
             if type(self.context.pipeline[name].get("max_hit")) is int
             and self.context.pipeline[name]["max_hit"] > 0
         ]
@@ -260,6 +261,28 @@ class PipelineControlFlowCompiler(PipelineBuilder):
         )
         node["on_error"] = values
 
+    def _popup_condition_node(self, popup: dict[str, Any], *, action: str) -> dict[str, Any]:
+        mode = popup.get("recognition_mode", "image")
+        if mode == "image":
+            return self._template_node(None, popup, action=action, role="global-popup")
+        if mode != "text":
+            raise ValueError("Independent rule recognition must be image or text")
+        text = popup.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > 200:
+            raise ValueError("Independent rule OCR text must contain 1 to 200 characters")
+        self.context.requires_ocr = True
+        node = self._node(
+            recognition="OCR",
+            action=action,
+            next_nodes=[],
+            role="global-popup",
+            attach=self._attach(None, popup, "global-popup"),
+        )
+        node.update(expected=[re.escape(text)], order_by="Horizontal", index=0)
+        if popup.get("search_region") is not None:
+            node["roi"] = self._rect(popup["search_region"])
+        return node
+
     def _compile_global_popups(
         self,
         raw_popups: Any,
@@ -309,9 +332,7 @@ class PipelineControlFlowCompiler(PipelineBuilder):
             name = self._name(f"Global_{index:03d}")
             click_mode = str(popup.get("click_mode") or "fixed")
             if click_mode == "image":
-                condition = self._template_node(
-                    None, popup, action="DoNothing", role="global-popup"
-                )
+                condition = self._popup_condition_node(popup, action="DoNothing")
                 click_template = str(popup.get("click_template_base64") or "")
                 if not click_template:
                     raise ValueError(f"global popup {index + 1} is missing click_template_base64")
@@ -334,7 +355,7 @@ class PipelineControlFlowCompiler(PipelineBuilder):
                 self.context.pipeline[name] = condition
                 self.context.pipeline[click_name] = click_node
             else:
-                node = self._template_node(None, popup, action="Click", role="global-popup")
+                node = self._popup_condition_node(popup, action="Click")
                 node.update(self._repeat_fields(popup))
                 if click_mode in {"match_center", "template_center"}:
                     node["target"] = True

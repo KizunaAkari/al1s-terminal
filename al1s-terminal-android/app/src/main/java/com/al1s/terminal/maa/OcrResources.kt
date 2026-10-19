@@ -1,8 +1,8 @@
 package com.al1s.terminal.maa
 
+import com.al1s.terminal.resources.copyWithSha256
 import java.io.File
 import java.nio.file.Files
-import java.security.MessageDigest
 import java.util.zip.ZipFile
 
 /** Extract only the pinned CPU models from our APK, into a helper-owned directory. */
@@ -19,8 +19,9 @@ class OcrResources(private val apk: String) : AutoCloseable {
                     val entry = checkNotNull(archive.getEntry("assets/maa-ocr/$name"))
                     require(entry.size in 1..(32 * 1024 * 1024))
                     val file = File(folder, name)
-                    archive.getInputStream(entry).use { input -> file.outputStream().use { input.copyTo(it) } }
-                    val digest = MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
+                    val digest = archive.getInputStream(entry).use { input ->
+                        file.outputStream().use { output -> copyWithSha256(input, output) }
+                    }
                     check(digest == manifest.getString(name)) { "ocr_asset_hash_mismatch" }
                 }
             }

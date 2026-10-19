@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from test_execution_coordinator import FakeMaaRunner, FakePlatform, _coordinator, _formal_work
+from tests.test_execution_coordinator import FakeMaaRunner, FakePlatform, _coordinator, _formal_work
 
 from al1s_terminal.execution.maa_runtime import MaaExecutionOutcome
 from al1s_terminal.lineup.detector import lineup_boxes

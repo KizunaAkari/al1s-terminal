@@ -16,8 +16,18 @@ object AndroidIndependentRulesPass {
             selected.distinct().forEach { step ->
                 val key="Global_${ruleIndex}_ForStep_$step"
                 val mode=rule.optString("click_mode","fixed")
-                val config=JSONObject(rule.toString()).put("action",if(mode=="image")"wait_image" else "wait_click")
+                val recognition=rule.optString("recognition_mode","image")
+                require(recognition in setOf("image","text"))
+                val text=recognition=="text"
+                val action=if(text) { if(mode=="image")"wait_text" else "click_text" }
+                    else if(mode=="image")"wait_image" else "wait_click"
+                val config=JSONObject(rule.toString()).put("action",action)
+                if(mode=="template_center")config.put("click_mode","match_center")
                 val node=AndroidStepNodes.build(config,step,materialize)
+                if(text && mode=="fixed") {
+                    val point=rule.getJSONObject("click")
+                    node.put("target",JSONArray().put(point.getInt("x")).put(point.getInt("y")))
+                }
                 node.put("post_delay",AndroidPipelineCompiler.milliseconds(rule.optDouble("wait_after_click_seconds",0.3)))
                 node.put("attach",JSONObject().put("dsl_step_index",step).put("dsl_action","independent_rule")
                     .put("maa_project_role","global-popup").put("popup_key",key).put("popup_condition",true)
@@ -27,6 +37,8 @@ object AndroidIndependentRulesPass {
                         .put("template_base64",rule.getString("click_template_base64"))
                         .put("threshold",rule.optDouble("click_threshold",rule.optDouble("threshold",0.85)))
                     clickConfig.remove("template")
+                    clickConfig.remove("search_region")
+                    rule.optJSONObject("click_search_region")?.let { clickConfig.put("search_region",it) }
                     val clickName="${key}_Click";val click=AndroidStepNodes.build(clickConfig,step,materialize)
                     click.put("attach",JSONObject(node.getJSONObject("attach").toString()).put("popup_condition",false))
                         .put("post_delay",node.getInt("post_delay"))
