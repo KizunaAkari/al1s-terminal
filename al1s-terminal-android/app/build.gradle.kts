@@ -14,8 +14,8 @@ android {
         applicationId = "com.al1s.terminal"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.2.5-service-recovery"
+        versionCode = 8
+        versionName = "0.2.6-moyu"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { arguments += "-DANDROID_STL=c++_static" } }

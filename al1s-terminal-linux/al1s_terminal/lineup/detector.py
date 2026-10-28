@@ -74,23 +74,3 @@ class PortraitDetector:
         return result
 
 
-def lineup_boxes(
-    boxes: list[list[int]], width: int, height: int
-) -> tuple[list[list[int] | None], bool]:
-    lower = [
-        b
-        for b in boxes
-        if b[1] + b[3] / 2 > height * 0.58
-        and 0.015 * width < b[2] < 0.12 * width
-        and 0.4 < b[2] / b[3] < 2
-    ]
-    left = sorted([b for b in lower if b[0] + b[2] / 2 < width * 0.5], key=lambda b: b[0])
-    right = sorted([b for b in lower if b[0] + b[2] / 2 >= width * 0.5], key=lambda b: b[0])
-    valid = len(left) == len(right) == 6
-    if valid:
-        for row in (left, right):
-            centers = [b[1] + b[3] / 2 for b in row]
-            valid = valid and max(centers) - min(centers) < height * 0.10
-    if not valid:
-        return [None] * 12, False
-    return [box for box in left + right], True

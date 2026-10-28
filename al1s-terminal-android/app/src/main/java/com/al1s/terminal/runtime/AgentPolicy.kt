@@ -1,19 +1,5 @@
 package com.al1s.terminal.runtime
 
-object AgentPolicy {
-    fun shouldStart(userEnabled: Boolean, identityPresent: Boolean, storageReady: Boolean): Boolean =
-        userEnabled && identityPresent && storageReady
-}
-
-data class ProviderObservation(
-    val connected: Boolean,
-    val nativeReady: Boolean,
-    val rootAuthorized: Boolean,
-) {
-    val canExecute: Boolean get() = connected && nativeReady
-    val isRoot: Boolean get() = connected && rootAuthorized
-}
-
 class AgentRetryPolicy {
     private var failures = 0
 
