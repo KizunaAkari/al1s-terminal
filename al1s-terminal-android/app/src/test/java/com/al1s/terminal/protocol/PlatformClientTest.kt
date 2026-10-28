@@ -17,6 +17,11 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class PlatformClientTest {
+    @Test fun editorListingAcceptsTheExistingArrayResponse() {
+        val connection = RecordingConnection(URL("https://platform/api"), "[]")
+        val client = PlatformClient("https://platform") { connection }
+        assertEquals(0, client.editorSessions("test-only").length())
+    }
     @Test
     fun registrationUsesTheSharedAndroidTerminalContract() {
         val server = ServerSocket(0, 1)

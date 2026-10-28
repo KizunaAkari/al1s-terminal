@@ -15,6 +15,8 @@ object SystemCapability {
             context.getSystemService(StorageManager::class.java)
                 .getAllocatableBytes(StorageManager.UUID_DEFAULT)
         }.getOrDefault(0)
+        val observation = if (com.al1s.terminal.broker.BrokerClient.codeCurrent(context))
+            runCatching { com.al1s.terminal.broker.BrokerClient.invoke("observe") }.getOrNull() else null
         return JSONObject()
             .put("schema_version", 1)
             .put("protocol_version", 1)
@@ -27,11 +29,17 @@ object SystemCapability {
             .put("storage_available_bytes", storage)
             .put("accelerator_type", JSONObject.NULL)
             .put("low_resource", memory.totalMem < 4L * 1024 * 1024 * 1024)
-            .put("provider_keys", PlatformClient.PROVIDER_KEYS)
+            .put("provider_keys",org.json.JSONArray(ProviderReadiness.keys(observation?.getString("maa_version"),
+                observation?.getBoolean("native_ready")==true,observation?.getBoolean("ocr_ready")==true)))
             .put(
                 "details",
                 JSONObject()
-                    .put("provider", "xiaomi-root-demo")
+                    .put("provider", "android-direct")
+                    .put("control_ready", observation != null)
+                    .put("native_ready", observation?.getBoolean("native_ready") == true)
+                    .put("maa_version", observation?.getString("maa_version") ?: JSONObject.NULL)
+                    .put("readiness_error",observation?.getString("readiness_error") ?: JSONObject.NULL)
+                    .put("root_authorized", observation?.getInt("uid") == 0)
                     .put("manufacturer", Build.MANUFACTURER)
                     .put("model", Build.MODEL),
             )

@@ -104,3 +104,12 @@ def test_fast_polling_does_not_repeat_active_writes_but_close_is_immediate():
     coordinator.reconcile()
     relay.stop_session.assert_called_once_with("token")
     assert platform.report.call_args.args[3] == "closed"
+
+
+def test_path_release_closes_local_capability_before_reporting_release():
+    coordinator, platform, relay, request = setup()
+    coordinator.reconcile()
+    coordinator.release_device(request.device_id)
+    relay.stop_session.assert_called_once_with("token")
+    assert platform.report.call_args.args[3] == "closed"
+    assert not coordinator._connections

@@ -4,7 +4,7 @@ import sys
 from contextlib import closing
 
 import pytest
-from test_terminal_deployer import CANDIDATE_IMAGE, FakeRunner, _config
+from tests.test_terminal_deployer import CANDIDATE_IMAGE, FakeRunner, _config
 
 from al1s_terminal.persistence.migrations import upgrade_database
 from terminal_deployer.models import DeploymentError

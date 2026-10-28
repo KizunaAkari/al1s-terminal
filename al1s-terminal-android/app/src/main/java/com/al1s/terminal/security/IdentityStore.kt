@@ -22,6 +22,17 @@ data class TerminalIdentity(
 
 class IdentityStore(context: Context) : RegistrationIdentityStore {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    fun needsOwnedState():Boolean = preferences.getString("owned-state-terminal",null) != load()?.terminalId
+    fun acceptanceStatus():String = preferences.getString("owned-acceptance", "accepting").orEmpty()
+    @Synchronized fun updateOwnedState(value:org.json.JSONObject) {
+        val current=load() ?: return
+        require(value.getString("terminal_id")==current.terminalId)
+        val version=value.getInt("row_version")
+        if(version<current.terminalRowVersion)return
+        check(preferences.edit().putInt(KEY_ROW_VERSION,version)
+            .putString("owned-state-terminal",current.terminalId)
+            .putString("owned-acceptance",value.getString("acceptance_status")).commit())
+    }
 
     override fun installationId(): String =
         preferences.getString(KEY_INSTALLATION_ID, null)
@@ -56,7 +67,7 @@ class IdentityStore(context: Context) : RegistrationIdentityStore {
         targetDeviceId: String,
         credential: String,
         terminalRowVersion: Int,
-    ) = TerminalConnectionGate.withConnection {
+    ) = TerminalConnectionGate.commitConnection {
         val previous = preferences.all
         val committed = preferences.edit()
             .putString(KEY_BASE_URL, baseUrl.trim().trimEnd('/'))
@@ -66,6 +77,8 @@ class IdentityStore(context: Context) : RegistrationIdentityStore {
             .putString(KEY_CREDENTIAL, encrypt(credential))
             .putInt(KEY_ROW_VERSION, terminalRowVersion)
             .putInt(KEY_CAPABILITY_REVISION, 0)
+            .remove("capability-fingerprint")
+            .remove("owned-state-terminal")
             .commit()
         if (!committed) {
             // SharedPreferences updates memory before its disk commit finishes.
@@ -86,12 +99,18 @@ class IdentityStore(context: Context) : RegistrationIdentityStore {
         }
     }
 
-    fun updateTerminalRowVersion(rowVersion: Int) {
+    @Synchronized fun updateTerminalRowVersion(rowVersion: Int) {
+        if(rowVersion<preferences.getInt(KEY_ROW_VERSION,1))return
         preferences.edit().putInt(KEY_ROW_VERSION, rowVersion).apply()
     }
 
     fun updateCapabilityRevision(revision: Int) {
         preferences.edit().putInt(KEY_CAPABILITY_REVISION, revision).apply()
+    }
+    fun capabilityFingerprint():String?=preferences.getString("capability-fingerprint",null)
+    fun confirmCapability(revision:Int,fingerprint:String) {
+        check(preferences.edit().putInt(KEY_CAPABILITY_REVISION,revision)
+            .putString("capability-fingerprint",fingerprint).commit())
     }
 
     fun clearCredential() {
@@ -101,6 +120,7 @@ class IdentityStore(context: Context) : RegistrationIdentityStore {
             .remove(KEY_CREDENTIAL)
             .remove(KEY_ROW_VERSION)
             .remove(KEY_CAPABILITY_REVISION)
+            .remove("capability-fingerprint")
             .apply()
     }
 

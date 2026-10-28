@@ -16,6 +16,7 @@ from al1s_terminal.app.cancellation import CancellationCoordinator
 from al1s_terminal.app.config import TerminalSettings
 from al1s_terminal.app.delivery import DeliveryCoordinator
 from al1s_terminal.app.device_discovery import TargetDeviceDiscoveryService
+from al1s_terminal.app.device_path_coordinator import DevicePathCoordinator
 from al1s_terminal.app.editor_coordinator import EditorCoordinator
 from al1s_terminal.app.execution_coordinator import ExecutionCoordinator, ExecutionCycleResult
 from al1s_terminal.app.lifecycle import TerminalLifecycleService
@@ -24,6 +25,7 @@ from al1s_terminal.app.secrets import FileSecretStore
 from al1s_terminal.execution.artifact_store import ExecutionArtifactCollector, LocalArtifactStore
 from al1s_terminal.execution.artifact_uploader import ArtifactUploadCoordinator, ArtifactUploader
 from al1s_terminal.execution.content_store import ContentAddressedStore
+from al1s_terminal.execution.device_authority import PathRuntimeOwner
 from al1s_terminal.execution.maa_plan_compiler import MaaPlanCompiler
 from al1s_terminal.execution.maa_runtime import MaaExecutionEngine
 from al1s_terminal.execution.maa_smoke import MaaRuntimeReadinessProbe
@@ -67,6 +69,7 @@ logger = structlog.get_logger(__name__)
 class TerminalRuntime:
     def __init__(self, settings: TerminalSettings) -> None:
         self._settings = settings
+        self._path_owner: PathRuntimeOwner | None = None
         self._shutdown_requested = Event()
         self._lifecycle_lock = Lock()
         self._reconciliation_requested = Event()
@@ -89,6 +92,7 @@ class TerminalRuntime:
                 "quick-events",
                 "mqtt",
                 "gc",
+                "paths",
             )
         }
         upgrade_database(settings.database_url)
@@ -276,6 +280,8 @@ class TerminalRuntime:
         }
 
     def run(self, *, stop_requested: Callable[[], bool] | None = None) -> None:
+        owner = PathRuntimeOwner(self._settings.data_dir / "device-authority")
+        self._path_owner = owner
         should_stop = stop_requested or (lambda: False)
         editor = EditorCoordinator(
             EditorPlatformClient(self._platform._request),
@@ -284,6 +290,11 @@ class TerminalRuntime:
             self._adb,
             self._interactive_relay,
         )
+        self._path_native_ready = False
+        paths = DevicePathCoordinator(self._platform._request, self._secret_store, self._adb,
+            self._uow_factory, owner, editor, lambda: self._path_native_ready)
+        if self._interactive_relay is not None:
+            self._interactive_relay.set_input_authority(paths.input.allowed)
         self._bootstrap_for_run()
         now = time.monotonic()
         next_heartbeat = now + self._settings.heartbeat_interval_seconds
@@ -296,9 +307,16 @@ class TerminalRuntime:
         next_gc = now + self._settings.gc_interval_seconds
         next_execution = now
         next_editor = now
+        next_paths = now
         try:
             while not should_stop():
                 now = time.monotonic()
+                if now >= next_paths:
+                    try:
+                        self._io_workers["paths"].poll(paths.cycle)
+                    except Exception as exc:
+                        logger.warning("device_path_cycle_failed", error_type=type(exc).__name__)
+                    next_paths = now + 15
                 if self._reconciliation_requested.is_set():
                     self._reconciliation_requested.clear()
                     next_reconciliation = now
@@ -310,20 +328,21 @@ class TerminalRuntime:
                     except PlatformCredentialRejectedError as exc:
                         self._revoke_manual_control()
                         self._lifecycle.handle_credential_rejection(exc)
-                    except PlatformError:
-                        self._revoke_manual_control()
+                    except PlatformError as exc:
+                        self._handle_platform_error(exc)
                     except Exception as exc:
                         logger.error("transfer_cycle_failed", error_type=type(exc).__name__)
                     next_reconciliation = now + self._settings.reconciliation_interval_seconds
                 if now >= next_editor:
                     try:
-                        self._io_workers["editor"].poll(editor.reconcile)
+                        self._io_workers["editor"].poll(lambda: self._editor_cycle(editor))
                     except PlatformCredentialRejectedError as exc:
                         self._revoke_manual_control()
                         self._lifecycle.handle_credential_rejection(exc)
-                    except PlatformError:
-                        self._revoke_manual_control()
+                    except PlatformError as exc:
+                        self._handle_platform_error(exc)
                     except Exception as exc:
+                        self._revoke_manual_control()
                         logger.error("editor_cycle_failed", error_type=type(exc).__name__)
                     next_editor = time.monotonic() + 1
                 if now >= next_heartbeat:
@@ -333,9 +352,8 @@ class TerminalRuntime:
                         if self._interactive_relay is not None:
                             self._interactive_relay.disconnect_platform()
                         self._lifecycle.handle_credential_rejection(exc)
-                    except PlatformError:
-                        if self._interactive_relay is not None:
-                            self._interactive_relay.disconnect_platform()
+                    except PlatformError as exc:
+                        self._handle_platform_error(exc)
                     except Exception as exc:
                         self._revoke_manual_control()
                         logger.error("heartbeat_cycle_failed", error_type=type(exc).__name__)
@@ -346,8 +364,8 @@ class TerminalRuntime:
                     except PlatformCredentialRejectedError as exc:
                         self._revoke_manual_control()
                         self._lifecycle.handle_credential_rejection(exc)
-                    except PlatformError:
-                        self._revoke_manual_control()
+                    except PlatformError as exc:
+                        self._handle_platform_error(exc)
                     except Exception as exc:
                         logger.error("capability_cycle_failed", error_type=type(exc).__name__)
                     next_capability = now + 300
@@ -393,8 +411,8 @@ class TerminalRuntime:
                         except PlatformCredentialRejectedError as exc:
                             self._revoke_manual_control()
                             self._lifecycle.handle_credential_rejection(exc)
-                        except PlatformError:
-                            self._revoke_manual_control()
+                        except PlatformError as exc:
+                            self._handle_platform_error(exc)
                         except MqttHintConnectionError:
                             pass
                     next_mqtt_refresh = now + 60
@@ -418,6 +436,7 @@ class TerminalRuntime:
                         next_gc,
                         next_execution,
                         next_editor,
+                        next_paths,
                     )
                     - time.monotonic(),
                     should_stop,
@@ -425,12 +444,30 @@ class TerminalRuntime:
                 )
         finally:
             self._shutdown_requested.set()
+            # The instance lock stays owned until this runtime's workers have stopped.
+            self._path_owner = owner
 
     def _heartbeat_cycle(self) -> None:
         with self._lifecycle_lock:
             self._lifecycle.heartbeat()
         if self._interactive_relay is not None:
             self._interactive_relay.confirm_platform(self._settings.heartbeat_interval_seconds * 3)
+
+    def _editor_cycle(self, editor: EditorCoordinator) -> None:
+        started = time.monotonic()
+        relay = self._interactive_relay
+        epoch = relay.confirmation_epoch() if relay is not None else None
+        editor.reconcile()
+        if relay is not None:
+            relay.confirm_editor(10.0 - (time.monotonic() - started), expected_epoch=epoch)
+
+    def _handle_platform_error(self, error: PlatformError) -> None:
+        if self._interactive_relay is None:
+            return
+        if error.status_code in {0, 408, 429, 500, 502, 503, 504}:
+            self._interactive_relay.platform_transient_failure()
+        else:
+            self._revoke_manual_control()
 
     def _capability_cycle(self) -> None:
         adb, _observations = self._device_discovery.synchronize()
@@ -496,6 +533,9 @@ class TerminalRuntime:
             self._interactive_relay.stop()
         self._platform.close()
         self._engine.dispose()
+        if self._path_owner is not None:
+            self._path_owner.close()
+            self._path_owner = None
 
     def _probe_capability(self, adb: AdbProbeResult) -> SystemCapability:
         capability: SystemCapability = include_adb_capability(
@@ -503,6 +543,7 @@ class TerminalRuntime:
         )
         maa = self._maa.probe()
         readiness = self._maa_readiness.probe(maa=maa, adb=adb)
+        self._path_native_ready = readiness.ready
         capability = include_maa_capability(capability, maa, readiness=readiness)
         capability = include_scrcpy_capability(
             capability,

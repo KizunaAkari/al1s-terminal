@@ -16,6 +16,7 @@ class ExecutionCoordinator(
 ) {
     suspend fun recoverInterrupted(): Boolean {
         val task = database.terminalDao().runningInbox() ?: return false
+        if(task.action=="maa")return false
         queueResult(task, "failure", "execution_interrupted")
         return true
     }
@@ -23,6 +24,7 @@ class ExecutionCoordinator(
     suspend fun executeNext(): String {
         val dao = database.terminalDao()
         val task = dao.nextQueuedInbox() ?: return "idle"
+        if(task.action=="maa")return "native_executor_required"
         val permitId = task.permitId ?: return "permit_missing"
         val permitToken = task.permitToken ?: return "permit_missing"
         val expiresAt = runCatching { task.permitExpiresAt?.let(Instant::parse) }.getOrNull()
@@ -44,8 +46,10 @@ class ExecutionCoordinator(
             .put("offline_permit_id", permitId)
             .put("offline_permit_token", permitToken)
             .put("occurred_at", Instant.now().toString())
+        var marked=false
         database.withTransaction {
             if (dao.markRunning(task.packageId, now) != 1) return@withTransaction
+            marked=true
             dao.insertOutbox(
                 OutboxReportEntity(
                     reportId = task.startReportId,
@@ -58,6 +62,7 @@ class ExecutionCoordinator(
                 ),
             )
         }
+        if(!marked)return "executor_busy"
         runCatching { dispatcher.flush() }
         val running = dao.inbox(task.packageId) ?: return "missing_after_start"
         val result = if (running.cancellationRequested) {

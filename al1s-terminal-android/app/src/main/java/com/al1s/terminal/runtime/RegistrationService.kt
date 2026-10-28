@@ -3,6 +3,7 @@ package com.al1s.terminal.runtime
 import com.al1s.terminal.protocol.PlatformClient
 import com.al1s.terminal.protocol.PlatformEndpoint
 import com.al1s.terminal.security.RegistrationIdentityStore
+import com.al1s.terminal.security.TerminalConnectionGate
 
 class RegistrationService(
     private val identityStore: RegistrationIdentityStore,
@@ -18,14 +19,14 @@ class RegistrationService(
             displayName.trim(),
             PlatformClient.AGENT_VERSION,
         )
-        identityStore.saveRegistration(
+        TerminalConnectionGate.commitConnection { identityStore.saveRegistration(
             secureBaseUrl,
             displayName.trim(),
             result.terminalId,
             result.targetDeviceId,
             result.credential,
             result.rowVersion,
-        )
+        ) }
         return result.targetDeviceId
     }
 }

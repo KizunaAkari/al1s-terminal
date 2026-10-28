@@ -6,8 +6,10 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [InboxTaskEntity::class, OutboxReportEntity::class, ProcessedCommandEntity::class],
-    version = 1,
+    entities = [InboxTaskEntity::class, OutboxReportEntity::class, ProcessedCommandEntity::class,
+        PackageResourceEntity::class, MaaAttemptLinkEntity::class, SetupCheckReportEntity::class,
+        QuickTestInboxEntity::class,QuickTestResourceEntity::class,QuickTestEventEntity::class],
+    version = 4,
     exportSchema = true,
 )
 abstract class TerminalDatabase : RoomDatabase() {
@@ -23,7 +25,8 @@ abstract class TerminalDatabase : RoomDatabase() {
                     context.applicationContext,
                     TerminalDatabase::class.java,
                     "al1s-terminal.db",
-                ).build().also { instance = it }
+                ).addMigrations(MaaRoomMigration.FROM_1_TO_2,MaaRoomMigration.FROM_2_TO_3,
+                    MaaRoomMigration.FROM_3_TO_4).build().also { instance = it }
             }
     }
 }

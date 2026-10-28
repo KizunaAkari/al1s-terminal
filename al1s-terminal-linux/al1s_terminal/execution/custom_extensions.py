@@ -140,6 +140,10 @@ def _action_classes(
                     raise ValueError("failure retry process pipeline is incomplete")
                 detail = context.run_task(entry, pipeline)
                 result["success"] = bool(detail is not None and detail.status.succeeded)
+                if result["success"]:
+                    for name in config.get("reset_hit_count_nodes", []):
+                        if not context.clear_hit_count(name):
+                            raise RuntimeError("Could not reset target click count after recovery")
                 if detail is not None:
                     result["task_id"] = detail.task_id
                     result["nodes"] = [
@@ -151,6 +155,7 @@ def _action_classes(
                     ]
             except Exception as exc:
                 result["error"] = str(exc)
+                result["success"] = False
             collector["custom_actions"].append(
                 {
                     "node": argv.node_name,

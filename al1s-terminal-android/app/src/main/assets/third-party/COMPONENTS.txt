@@ -1,0 +1,26 @@
+AL-1S Android direct terminal - bundled component references
+
+MaaFramework 5.12.1 (dynamically loaded official Android aarch64 libraries)
+Source: https://github.com/MaaXYZ/MaaFramework/tree/v5.12.1
+Pinned source: e6aa89259ff6907197becebdeb8efc0074f13dfc
+Distribution SHA256: 5b03901950af127f1417033afee7f1f35607f92dc01758d624e2b2c254319937
+License texts: maaframework-LICENSE.md and maaframework/LICENSE.md
+JNI integration sources: app/src/main/native in the AL-1S terminal repository.
+MaaAgentBinary Python scripts from the optional upstream share directory are not used by this APK.
+
+scrcpy server 3.3.4
+Source: https://github.com/Genymobile/scrcpy/tree/v3.3.4
+License: scrcpy-Apache-2.0.txt
+
+libadb-android 3.1.1
+Source: https://github.com/MuntashirAkon/libadb-android
+Pinned source: c849886ebc6d48e7b46d967e78a6bb65c90c3b74
+Selected license: libadb-Apache-2.0.txt
+
+OkHttp 4.12.0 and Okio 3.6.0
+Source: https://github.com/square/okhttp/tree/parent-4.12.0
+License: okhttp-Apache-2.0.txt
+
+Additional fixed build dependencies are declared in app/build.gradle.kts:
+Conscrypt Android 2.5.3, Bouncy Castle 1.81, AndroidX Room 2.8.4 and WorkManager 2.11.2.
+Native dependencies are supplied by the pinned MaaFramework distribution.

@@ -36,8 +36,11 @@ class MaaPipelineCompiler(PipelineNames):
         steps = script.get("steps", [])
         if not isinstance(steps, list):
             raise ValueError("steps must be an array")
-        canonical = json.dumps(script, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        script_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+        digest = hashlib.sha256()
+        encoder = json.JSONEncoder(ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        for chunk in encoder.iterencode(script):
+            digest.update(chunk.encode("utf-8"))
+        script_hash = digest.hexdigest()[:16]
         bundle_dir = self.cache_root / script_hash
         image_dir, pipeline_dir = bundle_dir / "image", bundle_dir / "pipeline"
         image_dir.mkdir(parents=True, exist_ok=True)

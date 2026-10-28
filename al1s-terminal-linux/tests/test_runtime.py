@@ -12,6 +12,38 @@ from al1s_terminal.app.runtime import TerminalRuntime
 from al1s_terminal.transport.platform import PlatformUnavailableError
 
 
+@pytest.mark.parametrize("status,transient", [(0, True), (503, True), (504, True),
+                                            (429, True), (401, False), (403, False),
+                                            (404, False), (409, False)])
+def test_manual_control_failure_classification(status, transient):
+    from al1s_terminal.transport.platform import PlatformError
+
+    runtime = object.__new__(TerminalRuntime)
+    runtime._interactive_relay = Mock()
+    runtime._handle_platform_error(PlatformError(status, "failure", "failure"))
+    relay = runtime._interactive_relay
+    if transient:
+        relay.platform_transient_failure.assert_called_once_with()
+        relay.disconnect_platform.assert_not_called()
+    else:
+        relay.disconnect_platform.assert_called_once_with()
+        relay.platform_transient_failure.assert_not_called()
+
+
+def test_editor_cycle_deducts_request_duration_from_confirmation(monkeypatch):
+    from al1s_terminal.app import runtime as module
+
+    runtime = object.__new__(TerminalRuntime)
+    runtime._interactive_relay = Mock()
+    runtime._interactive_relay.confirmation_epoch.return_value = 7
+    clock = iter([100.0, 104.0])
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
+    editor = Mock()
+    runtime._editor_cycle(editor)
+    editor.reconcile.assert_called_once_with()
+    runtime._interactive_relay.confirm_editor.assert_called_once_with(6.0, expected_epoch=7)
+
+
 class _OfflineLifecycle:
     def __init__(self, *, registered: bool) -> None:
         self.registered = registered
@@ -91,7 +123,7 @@ def test_control_revocation_without_video_provider_is_safe() -> None:
     runtime._revoke_manual_control()
 
 
-def test_runtime_slow_presence_does_not_stall_heartbeat_or_editor(monkeypatch):
+def test_runtime_slow_presence_does_not_stall_heartbeat_or_editor(monkeypatch, tmp_path):
     import time
     from threading import Event, Lock
 
@@ -100,7 +132,8 @@ def test_runtime_slow_presence_does_not_stall_heartbeat_or_editor(monkeypatch):
 
     runtime = object.__new__(TerminalRuntime)
     runtime._settings = SimpleNamespace(
-        heartbeat_interval_seconds=1, reconciliation_interval_seconds=1, gc_interval_seconds=1000
+        heartbeat_interval_seconds=1, reconciliation_interval_seconds=1, gc_interval_seconds=1000,
+        data_dir=tmp_path,
     )
     runtime._shutdown_requested = Event()
     runtime._reconciliation_requested = Event()
@@ -108,6 +141,7 @@ def test_runtime_slow_presence_does_not_stall_heartbeat_or_editor(monkeypatch):
     runtime._bootstrap_for_run = Mock()
     runtime._poll_execution = Mock(return_value=0.25)
     runtime._platform = Mock()
+    runtime._uow_factory = Mock()
     runtime._secret_store = Mock()
     runtime._adb = Mock()
     runtime._interactive_relay = Mock()
@@ -128,6 +162,7 @@ def test_runtime_slow_presence_does_not_stall_heartbeat_or_editor(monkeypatch):
             "quick-events",
             "mqtt",
             "gc",
+            "paths",
         )
     }
     runtime._delivery_worker = SingleFlight("test-delivery")
@@ -144,6 +179,10 @@ def test_runtime_slow_presence_does_not_stall_heartbeat_or_editor(monkeypatch):
 
     editor.reconcile.side_effect = chain([ValueError("bad response")], repeat(None))
     monkeypatch.setattr(module, "EditorCoordinator", lambda *args: editor)
+    path_owner = Mock()
+    monkeypatch.setattr(module, "PathRuntimeOwner", lambda *args: path_owner)
+    paths = Mock()
+    monkeypatch.setattr(module, "DevicePathCoordinator", lambda *args: paths)
     virtual = [0.0]
     monkeypatch.setattr(module.time, "monotonic", lambda: virtual[0])
 

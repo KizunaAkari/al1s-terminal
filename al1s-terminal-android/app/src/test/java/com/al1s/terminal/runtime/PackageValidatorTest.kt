@@ -65,6 +65,15 @@ class PackageValidatorTest {
         assertEquals("package_schema_invalid", error.code)
     }
 
+    @Test fun acceptsBoundMaaHeaderWithPlatformCanonicalText() {
+        val body = body("root_probe").put("source", JSONObject().put("module", "maa"))
+            .put("timeout_seconds", 30).put("manifest", JSONObject().put("schema_version", 1)
+                .put("definition_type", "script").put("entry_definition_key", "main").put("definitions", JSONObject().put("main", JSONObject())))
+        val canonical = CanonicalJson.encode(body)
+        val packageValue = TaskPackage(body.getString("package_id"), body.getString("attempt_id"), sha256(canonical), body, canonical)
+        assertEquals("maa", PackageValidator.validate(packageValue, identity).action)
+    }
+
     private fun body(action: String): JSONObject = JSONObject()
         .put("protocol_version", 1)
         .put("package_schema_version", 1)

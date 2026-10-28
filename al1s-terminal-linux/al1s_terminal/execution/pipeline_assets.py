@@ -9,8 +9,14 @@ from pathlib import Path
 class PipelineAssetWriter:
     def __init__(self, image_dir: Path) -> None:
         self.image_dir = image_dir
+        self._materialized: dict[str, str] = {}
 
     def materialize(self, value: str) -> str:
+        cached = self._materialized.get(value)
+        if cached is not None:
+            if (self.image_dir / cached).exists():
+                return cached
+            del self._materialized[value]
         header = ""
         encoded = value
         if "," in value:
@@ -32,4 +38,5 @@ class PipelineAssetWriter:
         path = self.image_dir / name
         if not path.exists():
             path.write_bytes(data)
+        self._materialized[value] = name
         return name

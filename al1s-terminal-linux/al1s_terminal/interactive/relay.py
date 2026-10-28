@@ -5,6 +5,7 @@ import json
 import ssl
 import subprocess
 import threading
+from collections.abc import Callable
 from contextlib import suppress
 from functools import partial
 from pathlib import Path
@@ -84,6 +85,11 @@ class AdbScrcpyRelay:
                 "scrcpy relay failed to start",
             )
         session = self._manager.create(serial)
+        try:
+            self._prepare_screen_sync(session.token)
+        except BaseException:
+            self._manager.stop(session.token)
+            raise
         base = f"{self._public_url}/scrcpy/{session.token}"
         return {
             "session_token": session.token,
@@ -110,6 +116,20 @@ class AdbScrcpyRelay:
 
     def confirm_platform(self, valid_for_seconds: float) -> None:
         self._manager.confirm_platform(valid_for_seconds)
+
+    def confirmation_epoch(self) -> int:
+        return self._manager.confirmation_epoch()
+
+    def confirm_editor(
+        self, valid_for_seconds: float, *, expected_epoch: int | None = None,
+    ) -> None:
+        self._manager.confirm_editor(valid_for_seconds, expected_epoch=expected_epoch)
+
+    def platform_transient_failure(self) -> None:
+        self._manager.platform_transient_failure()
+
+    def set_input_authority(self, authority: Callable[[str], bool]) -> None:
+        self._manager.set_input_authority(authority)
 
     def disconnect_platform(self) -> None:
         self._manager.disconnect_platform()
@@ -228,6 +248,7 @@ class AdbScrcpyRelay:
     async def _video(self, token: str, websocket: WebSocketServerProtocol) -> None:
         if self._factory is None:
             raise RuntimeError("scrcpy provider unavailable")
+        await asyncio.to_thread(self._prepare_screen_sync, token)
         opening = asyncio.create_task(self._factory.open(self._manager.get(token).serial))
         disconnected = (
             asyncio.create_task(websocket.wait_closed())
@@ -284,6 +305,7 @@ class AdbScrcpyRelay:
                 raise ValueError("screenshot channel is receive-only")
 
         async def capture() -> None:
+            await asyncio.to_thread(self._prepare_screen_sync, token)
             body = await factory.screenshot(self._manager.get(token).serial)
             self._manager.get(token)  # A revoked session must not receive captured content.
             await asyncio.wait_for(websocket.send(body), 3)
@@ -313,6 +335,7 @@ class AdbScrcpyRelay:
     async def _foreground(self, token: str, websocket: WebSocketServerProtocol) -> None:
         if self._adb is None:
             raise RuntimeError("foreground probe unavailable")
+        await asyncio.to_thread(self._prepare_screen_sync, token)
         serial = self._manager.get(token).serial
         package = await asyncio.to_thread(self._adb.foreground_package, serial)
         self._manager.get(token)  # Reject a response after session revocation.
@@ -357,6 +380,13 @@ class AdbScrcpyRelay:
         else:
             future = asyncio.run_coroutine_threadsafe(close_all(), loop)
             future.result(timeout=5)
+
+    def _prepare_screen_sync(self, token: str) -> None:
+        adb = self._adb
+        if adb is not None:
+            self._manager.prepare_screen(token, lambda serial: adb.prepare_screen(
+                serial, allowed=lambda: self._manager.can_prepare(token),
+            ))
 
 
 def _parse_path(path: str) -> tuple[str | None, InteractiveChannel | None]:

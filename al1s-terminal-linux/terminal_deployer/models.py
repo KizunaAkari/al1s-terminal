@@ -7,7 +7,7 @@ from pathlib import Path
 
 DEPLOYMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,239}\.tar$")
-IMAGE_REFERENCE = re.compile(r"^al1s-terminal-next:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+IMAGE_REFERENCE = re.compile(r"^al1s-terminal(?:-next)?:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 IMAGE_ID = re.compile(r"^sha256:[a-f0-9]{64}$")
 

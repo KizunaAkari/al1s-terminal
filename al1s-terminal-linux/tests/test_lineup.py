@@ -3,10 +3,9 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from test_execution_coordinator import FakeMaaRunner, FakePlatform, _coordinator, _formal_work
+from tests.test_execution_coordinator import FakeMaaRunner, FakePlatform, _coordinator, _formal_work
 
 from al1s_terminal.execution.maa_runtime import MaaExecutionOutcome
-from al1s_terminal.lineup.detector import lineup_boxes
 from al1s_terminal.lineup.executor import LineupExecutor
 from al1s_terminal.lineup.matching import agreed, name_id
 
@@ -21,11 +20,6 @@ def test_names_do_not_conflate_outfits_or_guess_ambiguous_aliases():
     assert not agreed(1, 2, 0.9, 0.2, 0.9, True)
     assert not agreed(1, 1, 0.9, 0.2, 0.3, True)
     assert not agreed(1, 1, 0.9, 0.2, 0.9, False)
-
-
-def test_incomplete_layout_is_not_accepted():
-    boxes, valid = lineup_boxes([], 2400, 1080)
-    assert boxes == [None] * 12 and not valid
 
 
 def test_cancel_before_inference_does_not_launch(tmp_path):

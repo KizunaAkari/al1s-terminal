@@ -326,78 +326,28 @@ class MaaDiagnostics:
 
     @classmethod
     def enrich_failure_diagnosis(
-        cls,
-        failure: dict[str, Any],
-        script: dict[str, Any],
+        cls, failure: dict[str, Any], script: dict[str, Any],
     ) -> None:
-        """Attach screenshot-time template scores without altering the evidence PNG."""
-        diagnosis = failure.get("failure_diagnosis")
-        failed_step = failure.get("failed_step")
-        if not isinstance(diagnosis, dict) or not isinstance(failed_step, dict):
-            return
-        failed_index = failed_step.get("index")
-        steps = script.get("steps")
-        if (
-            not isinstance(failed_index, int)
-            or not isinstance(steps, list)
-            or not 0 <= failed_index < len(steps)
-            or not isinstance(steps[failed_index], dict)
-        ):
-            return
-        step = steps[failed_index]
-        action = str(step.get("action") or failed_step.get("action") or "")
-        title = str(diagnosis.get("title") or "")
-        error_type = str(failure.get("error_type") or "")
+        """Recheck the exact failure PNG; do not modify pixels or live decisions."""
+        from .failure_template_selection import failure_template
 
-        template_value = ""
-        threshold = 0.85
-        region: Any = None
-        template_role = "condition"
-        if error_type == "PostAssertionFailed":
-            assertion = step.get("post_assertion")
-            if not isinstance(assertion, dict):
-                return
-            template_value = str(assertion.get("template_base64") or "")
-            threshold = float(assertion.get("threshold", 0.85))
-            region = assertion.get("search_region")
-            template_role = "post_assertion"
-        elif action == "wait_click" and title == "点击图片识别失败":
-            template_value = str(step.get("click_template_base64") or "")
-            threshold = float(step.get("click_threshold", step.get("threshold", 0.85)))
-            region = step.get("click_search_region")
-            template_role = "click"
-        elif action in {"wait_click", "wait_image"} and diagnosis.get("stage") in {
-            "recognition",
-            "transition",
-        }:
-            template_value = str(step.get("template_base64") or "")
-            threshold = float(step.get("threshold", 0.85))
-            region = step.get("search_region")
-        else:
-            return
-        if not template_value:
-            return
-
+        selected = failure_template(failure, script)
         screenshot = failure.get("failure_screenshot")
-        encoded_screen = screenshot.get("data_base64") if isinstance(screenshot, dict) else None
-        if not isinstance(encoded_screen, str) or not encoded_screen:
+        screen = screenshot.get("data_base64") if isinstance(screenshot, dict) else None
+        if selected is None or not isinstance(screen, str) or not screen:
+            return
+        template, threshold, region, role = selected
+        diagnosis = failure.setdefault("failure_diagnosis", {})
+        if not isinstance(diagnosis, dict):
             return
         try:
-            evidence = cls._template_match_evidence(
-                encoded_screen,
-                template_value,
-                threshold,
-                region,
-            )
+            evidence = cls._template_match_evidence(screen, template, threshold, region)
         except Exception as exc:
-            diagnosis["recognition"] = {
-                "template_role": template_role,
-                "configured_threshold": round(threshold, 6),
-                "score_error": str(exc),
-            }
+            diagnosis["recognition"] = {"template_role": role,
+                                        "configured_threshold": round(threshold, 6),
+                                        "score_error": str(exc)[:512]}
             return
-
-        evidence["template_role"] = template_role
+        evidence["template_role"] = role
         diagnosis["recognition"] = evidence
         score = float(evidence["actual_score"])
         score_text = f"失败现场匹配值 {score:.3f} / 设定阈值 {threshold:.3f}"

@@ -9,6 +9,7 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["commandId"], unique = true),
         Index(value = ["state", "createdAt"]),
+        Index(value = ["attemptId"]),
     ],
 )
 data class InboxTaskEntity(

@@ -1,4 +1,4 @@
-"""Bounded debug-only observations of real native recognition attempts."""
+"""Bounded observations of real native recognition attempts and execution guards."""
 
 from __future__ import annotations
 
@@ -58,7 +58,8 @@ class RecognitionDiagnostics:
             "post_assertion"
             if metadata.get("maa_project_role") == "post-assertion"
             else "click_target"
-            if rule and not metadata.get("popup_condition")
+            if (rule and not metadata.get("popup_condition"))
+            or metadata.get("maa_project_role") == "step-click"
             else "recognition"
         )
         if rule and (match := re.search(r"_Global_(\d+)_ForStep_", rule)):
@@ -133,6 +134,35 @@ class RecognitionDiagnostics:
                 if (valid := _number(value, 0, 86_400)) is not None:
                     result[key] = round(valid, 3)
         return result
+
+
+def enrich_execution_failure(
+    diagnostic: dict[str, Any], pipeline: dict[str, dict[str, Any]], clock: Any,
+) -> None:
+    if clock is None or not isinstance(clock.active, str):
+        return
+    contexts = [node.get("custom_recognition_param") for node in pipeline.values()]
+    matching = [item for item in contexts if isinstance(item, dict)
+                and item.get("key") == clock.active and item.get("rule") == clock.rule
+                and not item.get("condition")]
+    indexes: set[int] = {item["step_index"] for item in matching
+               if type(item.get("step_index")) is int and 0 <= item["step_index"] < 1000}
+    if len(indexes) != 1:
+        return
+    index = indexes.pop()
+    context: dict[str, Any] = {"step_index": index}
+    if clock.rule is not None:
+        match = re.search(r"_Global_(\d+)_ForStep_", clock.rule)
+        if match is None:
+            return
+        context["rule_index"] = int(match[1])
+    budget = clock.rule_budget if clock.rule else clock.budget
+    elapsed = clock.now() - clock.rule_started if clock.rule else clock.spent(clock.active)
+    for key, value in (("timeout_seconds", budget), ("elapsed_seconds", elapsed)):
+        if (valid := _number(value, 0, 86_400)) is not None:
+            context[key] = round(valid, 3)
+    diagnostic["execution_failure"] = context
+    diagnostic["failed_step"] = {"index": index, "number": index + 1}
 
 
 def enrich_recognition_failure(
