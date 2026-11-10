@@ -61,20 +61,25 @@ class ArtifactUploader:
             raise ArtifactUploadError("artifact content changed after it was staged")
         if expected_size_bytes is not None and size_bytes != expected_size_bytes:
             raise ArtifactUploadError("artifact size changed after it was staged")
-        created = self._platform.create_artifact_upload(
-            identity.terminal_id,
-            identity.credential,
-            CreateArtifactUploadPayload(
-                owner_kind=owner_kind,
-                owner_id=owner_id,
-                artifact_kind=artifact_kind,
-                file_name=file_name or source.name,
-                sha256=sha256,
-                size_bytes=size_bytes,
-                media_type=media_type,
-            ),
-            idempotency_key=idempotency_key,
-        )
+        try:
+            created = self._platform.create_artifact_upload(
+                identity.terminal_id,
+                identity.credential,
+                CreateArtifactUploadPayload(
+                    owner_kind=owner_kind,
+                    owner_id=owner_id,
+                    artifact_kind=artifact_kind,
+                    file_name=file_name or source.name,
+                    sha256=sha256,
+                    size_bytes=size_bytes,
+                    media_type=media_type,
+                ),
+                idempotency_key=idempotency_key,
+            )
+        except PlatformError as exc:
+            if exc.status_code == 409 and exc.code == "artifact_upload_expired":
+                raise ArtifactUploadError("artifact_upload_revoked") from exc
+            raise
         if created.status == "ready":
             return created
         if created.processing:
@@ -158,7 +163,7 @@ class ArtifactUploadCoordinator:
                 self._release(
                     artifact.artifact_id,
                     worker_id,
-                    type(exc).__name__,
+                    "artifact_upload_revoked" if str(exc) == "artifact_upload_revoked" else type(exc).__name__,
                     permanent=True,
                 )
                 continue

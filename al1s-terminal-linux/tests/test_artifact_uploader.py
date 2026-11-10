@@ -192,6 +192,42 @@ def test_artifact_upload_coordinator_preserves_business_name_and_confirms_queue(
     assert (tmp_path / staged.relative_path).exists()
 
 
+@pytest.mark.parametrize("during_create", [True, False])
+def test_revoked_upload_stops_retry_but_expired_completion_retries(local_engine, tmp_path, during_create):
+    from al1s_terminal.transport.platform import PlatformError
+
+    source = tmp_path / "evidence.png"
+    source.write_bytes(b"evidence")
+    secrets = FileSecretStore(tmp_path / "credential")
+    secrets.save(SecureIdentity(uuid4(), uuid4(), "credential", 1, 1))
+    with LocalUnitOfWork.from_engine(local_engine) as uow:
+        work = uow.work_items.add(kind=WorkItemKind.FORMAL_TASK, remote_id=uuid4(),
+            content_hash="a" * 64, target_device_id=uuid4(), available_at=NOW, payload={}, now=NOW)
+    identity = uuid4()
+    store = LocalArtifactStore(tmp_path)
+    staged = store.stage(artifact_id=identity, work_item_id=work.work_item_id,
+        owner_kind="formal_attempt", owner_id=uuid4(), artifact_kind="screenshot",
+        file_name="evidence.png", media_type="image/png", source=source)
+    with LocalUnitOfWork.from_engine(local_engine) as uow:
+        uow.artifacts.add_many((staged,), now=NOW)
+    platform = FakeArtifactPlatform()
+    def expired(*_args, **_kwargs):
+        raise PlatformError(409, "artifact_upload_expired", "expired")
+    if during_create:
+        platform.create_artifact_upload = expired
+    else:
+        platform.complete_artifact_upload = expired
+    coordinator = ArtifactUploadCoordinator(
+        uploader=ArtifactUploader(platform=platform, secret_store=secrets, data_dir=tmp_path),
+        store=store, secret_store=secrets,
+        uow_factory=lambda: LocalUnitOfWork.from_engine(local_engine), clock=lambda: NOW)
+    assert coordinator.flush() == 0
+    with LocalUnitOfWork.from_engine(local_engine) as uow:
+        artifact = uow.artifacts.get(identity)
+    assert artifact.status is (LocalArtifactStatus.DEAD_LETTER if during_create else LocalArtifactStatus.PENDING)
+    assert (tmp_path / staged.relative_path).read_bytes() == b"evidence"
+
+
 def _artifact(
     artifact_id: UUID,
     request: CreateArtifactUploadPayload,
